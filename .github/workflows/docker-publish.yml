@@ -39,7 +39,8 @@ jobs:
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
-            type=raw,value=nodejs
+            type=raw,value=latest
+            type=date,format=YYYY-MM-DD
 
       - name: Build and push (multi-platform)
         uses: docker/build-push-action@v5
