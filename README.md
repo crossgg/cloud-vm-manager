@@ -1,6 +1,6 @@
 # Azure VM Manager
 
-一个轻量级的 Azure 云实例管理服务，支持通过网页界面管理 Azure 虚拟机实例，包括开机、关机、重启和更换公网IP等功能。
+一个轻量的 Azure 云实例管理服务，支持通过网页界面管理 Azure 虚拟机实例，包括启动、关机、重启和更换公网IP等功能。
 
 ![界面示例](pic/示例.jpg)
 
@@ -16,7 +16,7 @@
 
 ## 技术栈
 
-- **后端**: Node.js + Express
+- **后端**: Go + Gin
 - **前端**: HTML + CSS + JavaScript
 - **API**: Azure REST API
 - **认证**: Service Principal
@@ -25,19 +25,13 @@
 
 ### 环境要求
 
-- Node.js >= 20.x
+- Go >= 1.22 或 Docker
 - Azure 订阅（学生订阅或正式订阅）
 - Azure Service Principal（需要 Contributor 权限）
 
-### 安装依赖
-
-```bash
-npm install
-```
-
 ### 配置文件
 
-编辑 `config.yaml`，填写您的 Azure Service Principal 信息：
+编辑 `config.yaml`，填入你的 Azure Service Principal 信息：
 
 ```yaml
 azure:
@@ -46,7 +40,7 @@ azure:
   client_secret: "your-client-secret"
   subscription_id: "your-subscription-id"
 
-defaults:
+default:
   resource_group: "your-resource-group"
   location: "your-location"
 ```
@@ -54,10 +48,18 @@ defaults:
 ### 本地运行
 
 ```bash
-npm start
+go mod tidy
+go run .
 ```
 
-访问 <http://localhost:3000>
+访问 http://localhost:3000
+
+### Docker 运行
+
+```bash
+docker build -t azure-vm-manager .
+docker run -d -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml --name azure-vm-manager azure-vm-manager
+```>
 
 ## Docker 部署
 
@@ -138,8 +140,6 @@ docker run -d -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml --name azure-v
    - 释放关联的IP地址
 
 > **注意**: 更换IP后，VM会获得新的公网IP地址，旧IP会被自动清理，无需手动操作。
-- DDoS 防护: 禁用
-- IP 版本: IPv4
 
 ## 项目结构
 
@@ -161,6 +161,8 @@ docker run -d -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml --name azure-v
 
 1. 确保 Service Principal 具有足够的权限（建议 Contributor 角色）
 2. 学生订阅的赠金余额 API 可能受限，建议手动检查 Azure 门户
+3. 更换 IP 时会自动创建新的公网 IP 并删除旧的 IP，无需手动清理
+4. 建议使用环境变量或密钥管理工具存储敏感信息
 
 ## License
 

@@ -239,10 +239,23 @@ async function handleChangeIP(vmName) {
     
     if (data.error) {
       addLog(`更换IP失败: ${data.error}`, 'error');
+      if (data.logs) {
+        data.logs.forEach(log => addLog(log, 'error'));
+      }
       return;
     }
     
-    addLog(`IP更换成功! 新IP: ${data.newIpAddress}`, 'success');
+    // 打印所有步骤
+    if (data.logs) {
+      data.logs.forEach(log => addLog(log, 'info'));
+    }
+    
+    if (data.newIpAddress) {
+      addLog(`IP更换成功! 新IP: ${data.newIpAddress}`, 'success');
+    } else {
+      addLog(`IP更换成功!`, 'success');
+    }
+    
     setTimeout(() => refreshVM(vmName), 2000);
   } catch (error) {
     addLog(`更换IP异常: ${error.message}`, 'error');
