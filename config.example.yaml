@@ -5,7 +5,7 @@ azure:
   client_secret: "your-client-secret-here"
   subscription_id: "your-subscription-id-here"
 
-defaults:
+default:
   resource_group: "your-resource-group" ##新建的资源组名称
   location: "your-location" ##新建IP所在的位置需要和保持机器位置一致，如：Korea Central 
 
