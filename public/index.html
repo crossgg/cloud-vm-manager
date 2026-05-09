@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Azure VM 管理面板</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-left">
+        <h1>Azure VM 管理面板</h1>
+      </div>
+      <div class="header-right">
+        <div class="balance-card">
+          <span class="balance-label">赠金余额</span>
+          <span class="balance-value" id="balance">加载中...</span>
+          <button class="balance-refresh-btn" onclick="fetchBalance()" title="刷新余额">🔄</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="main-content">
+      <aside class="sidebar">
+        <nav>
+          <a href="#" class="nav-item active" data-section="overview">概览</a>
+          <a href="#" class="nav-item" data-section="instances">实例管理</a>
+        </nav>
+      </aside>
+
+      <main class="content-area">
+        <div id="overview-section" class="section active">
+          <div class="overview-cards">
+            <div class="stat-card">
+              <div class="stat-icon vm-icon">🖥️</div>
+              <div class="stat-info">
+                <div class="stat-value" id="vm-count">0</div>
+                <div class="stat-label">VM实例</div>
+              </div>
+            </div>
+            <div class="stat-card running">
+              <div class="stat-icon">✅</div>
+              <div class="stat-info">
+                <div class="stat-value" id="running-count">0</div>
+                <div class="stat-label">运行中</div>
+              </div>
+            </div>
+            <div class="stat-card stopped">
+              <div class="stat-icon">⏹️</div>
+              <div class="stat-info">
+                <div class="stat-value" id="stopped-count">0</div>
+                <div class="stat-label">已停止</div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div id="instances-section" class="section">
+          <div class="section-header">
+            <h2>实例管理</h2>
+            <button class="refresh-btn" onclick="refreshVMs()">🔄 刷新</button>
+          </div>
+
+          <div id="vm-list" class="vm-list">
+            <div class="loading">加载中...</div>
+          </div>
+        </div>
+      </main>
+    </div>
+
+    <div class="log-panel">
+      <div class="log-header">
+        <span>操作日志</span>
+        <button class="clear-log-btn" onclick="clearLogs()">清空</button>
+      </div>
+      <div id="logs" class="logs-container"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
