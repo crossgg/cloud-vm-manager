@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   azure-vm-manager:
-    image: ghcr.io/crossgg/azure-vm-manager:latest
+    image: ghcr.io/crossgg/azure-vm-manager:nodejs
     container_name: azure-vm-manager
     ports:
       - "3000:3000"

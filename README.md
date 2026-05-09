@@ -2,6 +2,8 @@
 
 一个轻量级的 Azure 云实例管理服务，支持通过网页界面管理 Azure 虚拟机实例，包括开机、关机、重启和更换公网IP等功能。
 
+![界面示例](pic/示例.jpg)
+
 ## 功能特性
 
 - ✅ VM 实例列表展示
@@ -118,6 +120,27 @@ docker run -d -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml --name azure-v
 - DDoS 防护: 禁用
 - IP 版本: IPv4
 
+### 更换IP流程
+
+点击"更换IP"按钮后，系统会自动执行以下步骤：
+
+1. **创建新公网IP**
+   - 使用 Standard SKU
+   - 启用 Zone-redundant 高可用配置
+   - 禁用 DDoS 防护（学生订阅推荐）
+
+2. **更新网卡配置**
+   - 将网卡的 `ipconfig1` 关联到新创建的公网IP
+   - 网络配置自动更新
+
+3. **删除旧公网IP**
+   - 自动删除不再使用的旧公网IP资源
+   - 释放关联的IP地址
+
+> **注意**: 更换IP后，VM会获得新的公网IP地址，旧IP会被自动清理，无需手动操作。
+- DDoS 防护: 禁用
+- IP 版本: IPv4
+
 ## 项目结构
 
 ```
@@ -138,8 +161,6 @@ docker run -d -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml --name azure-v
 
 1. 确保 Service Principal 具有足够的权限（建议 Contributor 角色）
 2. 学生订阅的赠金余额 API 可能受限，建议手动检查 Azure 门户
-3. 更换 IP 会产生新的公网 IP 资源，请及时清理旧的 IP
-4. 建议使用环境变量或密钥管理工具存储敏感信息
 
 ## License
 
