@@ -3,79 +3,167 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Azure VM 管理面板</title>
+  <title>多云 VM 管理面板</title>
   <link rel="stylesheet" href="/public/style.css">
 </head>
 <body>
-  <div class="container">
-    <header>
-      <div class="header-left">
-        <h1>Azure VM 管理面板</h1>
-      </div>
-      <div class="header-right">
-        <div class="balance-card">
-          <span class="balance-label">赠金余额</span>
-          <span class="balance-value" id="balance">加载中...</span>
-          <button class="balance-refresh-btn" onclick="fetchBalance()" title="刷新余额">🔄</button>
+  <div id="app-shell" class="shell app-shell locked">
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark">VM</span>
+        <div>
+          <h1>多云 VM 管理面板</h1>
+          <p>Azure / OCI / GCP 实例运维</p>
         </div>
+      </div>
+      <div class="topbar-actions">
+        <span id="auth-badge" class="auth-badge">检查认证中</span>
+        <button id="logout-btn" class="ghost-btn" type="button" hidden>退出</button>
       </div>
     </header>
 
-    <div class="main-content">
+    <div class="layout">
       <aside class="sidebar">
         <nav>
           <a href="#" class="nav-item active" data-section="overview">概览</a>
           <a href="#" class="nav-item" data-section="instances">实例管理</a>
+          <a href="#" class="nav-item" data-section="settings">管理</a>
         </nav>
       </aside>
 
       <main class="content-area">
-        <div id="overview-section" class="section active">
-          <div class="overview-cards">
-            <div class="stat-card">
-              <div class="stat-icon vm-icon">🖥️</div>
-              <div class="stat-info">
-                <div class="stat-value" id="vm-count">0</div>
-                <div class="stat-label">VM实例</div>
-              </div>
-            </div>
-            <div class="stat-card running">
-              <div class="stat-icon">✅</div>
-              <div class="stat-info">
-                <div class="stat-value" id="running-count">0</div>
-                <div class="stat-label">运行中</div>
-              </div>
-            </div>
-            <div class="stat-card stopped">
-              <div class="stat-icon">⏹️</div>
-              <div class="stat-info">
-                <div class="stat-value" id="stopped-count">0</div>
-                <div class="stat-label">已停止</div>
-              </div>
+        <section id="overview-section" class="section active">
+          <div class="section-title">
+            <div>
+              <h2>运行概览</h2>
+              <p>统计仅来自当前手动加载的账号。</p>
             </div>
           </div>
-        </div>
 
-        <div id="instances-section" class="section">
-          <div class="section-header">
-            <h2>实例管理</h2>
-            <button class="refresh-btn" onclick="refreshVMs()">🔄 刷新</button>
+          <div class="overview-grid">
+            <div class="stat-card">
+              <span class="stat-label">已加载实例</span>
+              <strong id="vm-count">0</strong>
+            </div>
+            <div class="stat-card running">
+              <span class="stat-label">运行中</span>
+              <strong id="running-count">0</strong>
+            </div>
+            <div class="stat-card stopped">
+              <span class="stat-label">已停止</span>
+              <strong id="stopped-count">0</strong>
+            </div>
+          </div>
+        </section>
+
+        <section id="instances-section" class="section">
+          <div class="section-title">
+            <div>
+              <h2>实例管理</h2>
+              <p>先选择账号，再加载该账号下的机器。</p>
+            </div>
+            <button id="refresh-current-btn" class="secondary-btn" type="button">刷新当前账号</button>
+          </div>
+
+          <div class="account-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>账号配置</h3>
+                <p>启动后不会自动读取云端机器，点击账号后才会加载。</p>
+              </div>
+              <span id="selected-account" class="selected-account">未加载</span>
+            </div>
+            <div id="account-list" class="account-list">
+              <div class="empty-state compact">正在读取本地账号配置...</div>
+            </div>
+            <div id="account-balance" class="account-balance">
+              <div class="empty-state compact">Azure 账号可在这里查询余额。</div>
+            </div>
           </div>
 
           <div id="vm-list" class="vm-list">
-            <div class="loading">加载中...</div>
+            <div class="empty-state">请选择一个账号加载机器。</div>
           </div>
-        </div>
+        </section>
+
+        <section id="settings-section" class="section">
+          <div class="section-title">
+            <div>
+              <h2>管理</h2>
+              <p>修改登录账号密码，或立即重载配置文件。</p>
+            </div>
+            <button id="reload-config-btn" class="secondary-btn" type="button">重载配置</button>
+          </div>
+
+          <div class="settings-grid">
+            <form id="auth-settings-form" class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>登录认证</h3>
+                  <p>密码明文输入，保存到配置文件前会自动转成 bcrypt 哈希。</p>
+                </div>
+              </div>
+
+              <label class="switch-row">
+                <input id="auth-enabled" type="checkbox">
+                <span>开启登录认证</span>
+              </label>
+
+              <label class="field">
+                <span>登录用户名</span>
+                <input id="auth-username" type="text" autocomplete="username">
+              </label>
+
+              <label class="field">
+                <span>新密码</span>
+                <input id="auth-password" type="text" autocomplete="new-password" placeholder="留空则不修改当前密码">
+              </label>
+
+              <div class="form-grid">
+                <label class="field">
+                  <span>会话有效小时</span>
+                  <input id="auth-session-hours" type="number" min="1" step="1" value="12">
+                </label>
+                <label class="switch-row inline">
+                  <input id="auth-cookie-secure" type="checkbox">
+                  <span>HTTPS Cookie</span>
+                </label>
+              </div>
+
+              <button class="primary-btn" type="submit">保存认证配置</button>
+              <div id="auth-settings-message" class="form-message"></div>
+            </form>
+
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3>配置状态</h3>
+              <p>修改配置文件后，点击“重载配置”才会生效。</p>
+                </div>
+              </div>
+              <dl class="settings-meta">
+                <div>
+                  <dt>配置文件</dt>
+                  <dd id="config-path">-</dd>
+                </div>
+                <div>
+                  <dt>最近状态</dt>
+                  <dd id="config-status">-</dd>
+                </div>
+              </dl>
+            </div>
+          </div>
+        </section>
       </main>
     </div>
 
-    <div class="log-panel">
+    <section class="log-panel">
       <div class="log-header">
         <span>操作日志</span>
-        <button class="clear-log-btn" onclick="clearLogs()">清空</button>
+        <button id="clear-log-btn" class="ghost-btn dark" type="button">清空</button>
       </div>
       <div id="logs" class="logs-container"></div>
-    </div>
+    </section>
   </div>
 
   <script src="/public/app.js"></script>

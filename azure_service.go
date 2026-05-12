@@ -18,15 +18,21 @@ type TokenResponse struct {
 
 type AzureService struct {
 	cfg      *Config
+	account  AzureConfig
 	token    string
 	tokenExp time.Time
 	client   *http.Client
 }
 
 func NewAzureService(cfg *Config) *AzureService {
+	return NewAzureAccountService(cfg, cfg.Azure)
+}
+
+func NewAzureAccountService(cfg *Config, account AzureConfig) *AzureService {
 	return &AzureService{
-		cfg:    cfg,
-		client: &http.Client{Timeout: 60 * time.Second},
+		cfg:     cfg,
+		account: account,
+		client:  &http.Client{Timeout: 60 * time.Second},
 	}
 }
 
@@ -37,13 +43,13 @@ func (az *AzureService) getToken() (string, error) {
 
 	data := url.Values{
 		"grant_type":    {"client_credentials"},
-		"client_id":     {az.cfg.Azure.ClientId},
-		"client_secret": {az.cfg.Azure.ClientSecret},
+		"client_id":     {az.account.ClientId},
+		"client_secret": {az.account.ClientSecret},
 		"resource":      {"https://management.azure.com/"},
 	}
 
 	resp, err := az.client.PostForm(
-		fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/token", az.cfg.Azure.TenantId),
+		fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/token", az.account.TenantId),
 		data,
 	)
 	if err != nil {
@@ -95,7 +101,7 @@ func (az *AzureService) request(method, url string, body io.Reader) (*http.Respo
 func (az *AzureService) ListVMs() ([]map[string]interface{}, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.Compute/virtualMachines?api-version=2023-03-01",
-		az.cfg.Azure.SubId,
+		az.account.SubId,
 	)
 	resp, err := az.request("GET", url, nil)
 	if err != nil {
@@ -131,8 +137,8 @@ func (az *AzureService) ListVMs() ([]map[string]interface{}, error) {
 func (az *AzureService) GetVM(vmName string) (map[string]interface{}, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s?api-version=2023-03-01&$expand=instanceView",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		vmName,
 	)
 	resp, err := az.request("GET", url, nil)
@@ -154,7 +160,11 @@ func (az *AzureService) GetVM(vmName string) (map[string]interface{}, error) {
 	if location, ok := vm["location"].(string); ok {
 		result["location"] = location
 	}
-	result["resourceGroup"] = az.cfg.Default.ResourceGroup
+	result["provider"] = "azure"
+	result["accountId"] = az.account.Name
+	result["group"] = az.account.Group
+	result["id"] = vmName
+	result["resourceGroup"] = az.account.ResourceGroup
 
 	// 机器类型
 	if hardwareProfile, ok := vm["properties"].(map[string]interface{})["hardwareProfile"].(map[string]interface{}); ok {
@@ -237,8 +247,8 @@ func (az *AzureService) GetVM(vmName string) (map[string]interface{}, error) {
 func (az *AzureService) getNetworkInterface(nicName string) (map[string]interface{}, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkInterfaces/%s?api-version=2023-04-01",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		nicName,
 	)
 	resp, err := az.request("GET", url, nil)
@@ -333,10 +343,23 @@ func (az *AzureService) GetSubscriptionBalance() (*BalanceResult, error) {
 	}, nil
 }
 
+func (az *AzureService) GetAccountBalance() (*AccountBalance, error) {
+	balance, err := az.GetSubscriptionBalance()
+	if err != nil {
+		return nil, err
+	}
+	return &AccountBalance{
+		Provider: "azure",
+		Account:  az.account.Name,
+		Total:    balance.Total,
+		Currency: balance.Currency,
+	}, nil
+}
+
 func (az *AzureService) getBalanceFromConsumptionAPI() (*BalanceResult, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.Consumption/balances?api-version=2023-11-01",
-		az.cfg.Azure.SubId,
+		az.account.SubId,
 	)
 
 	resp, err := az.request("GET", url, nil)
@@ -451,8 +474,8 @@ func (az *AzureService) getBalanceFromBillingAPI() (*BalanceResult, error) {
 func (az *AzureService) StartVM(vmName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s/start?api-version=2023-03-01",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		vmName,
 	)
 	resp, err := az.request("POST", url, nil)
@@ -466,8 +489,8 @@ func (az *AzureService) StartVM(vmName string) error {
 func (az *AzureService) StopVM(vmName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s/powerOff?api-version=2023-03-01",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		vmName,
 	)
 	resp, err := az.request("POST", url, nil)
@@ -481,8 +504,8 @@ func (az *AzureService) StopVM(vmName string) error {
 func (az *AzureService) RestartVM(vmName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s/restart?api-version=2023-03-01",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		vmName,
 	)
 	resp, err := az.request("POST", url, nil)
@@ -493,15 +516,77 @@ func (az *AzureService) RestartVM(vmName string) error {
 	return nil
 }
 
+func (az *AzureService) ChangeIP(vmName string) (*ChangeIPResult, error) {
+	var logs []string
+
+	vm, err := az.GetVM(vmName)
+	if err != nil {
+		return nil, err
+	}
+
+	nicName, ok := vm["nicName"].(string)
+	if !ok || nicName == "" {
+		return nil, fmt.Errorf("无法获取网卡信息")
+	}
+
+	oldIPName := ""
+	if publicIP, ok := vm["publicIP"].(map[string]interface{}); ok {
+		if ipName, ok := publicIP["name"].(string); ok && ipName != "N/A" {
+			oldIPName = ipName
+		}
+	}
+
+	newIPName := fmt.Sprintf("new-ip-%d", time.Now().Unix())
+
+	logs = append(logs, fmt.Sprintf("[1/3] 正在创建新IP: %s...", newIPName))
+	if err := az.CreatePublicIP(newIPName); err != nil {
+		return nil, fmt.Errorf("创建IP失败: %w", err)
+	}
+	logs = append(logs, fmt.Sprintf("[1/3] 创建新IP成功: %s", newIPName))
+
+	logs = append(logs, "[2/3] 正在关联新IP到网卡...")
+	if err := az.UpdateNetworkInterface(nicName, newIPName); err != nil {
+		return nil, fmt.Errorf("关联IP失败: %w", err)
+	}
+	logs = append(logs, "[2/3] 关联新IP成功")
+
+	if oldIPName != "" {
+		logs = append(logs, fmt.Sprintf("[3/3] 正在删除旧IP: %s...", oldIPName))
+		if err := az.DeletePublicIP(oldIPName); err != nil {
+			logs = append(logs, fmt.Sprintf("[3/3] 删除旧IP失败: %v (继续执行)", err))
+		} else {
+			logs = append(logs, fmt.Sprintf("[3/3] 删除旧IP成功: %s", oldIPName))
+		}
+	} else {
+		logs = append(logs, "[3/3] 无旧IP需要删除")
+	}
+
+	var newIPAddress string
+	if updatedVM, err := az.GetVM(vmName); err == nil {
+		if publicIP, ok := updatedVM["publicIP"].(map[string]interface{}); ok {
+			if ipAddr, ok := publicIP["ipAddress"].(string); ok {
+				newIPAddress = ipAddr
+			}
+		}
+	}
+
+	return &ChangeIPResult{
+		Success:      true,
+		Message:      "IP更换成功",
+		NewIPAddress: newIPAddress,
+		Logs:         logs,
+	}, nil
+}
+
 func (az *AzureService) CreatePublicIP(ipName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s?api-version=2023-04-01",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		ipName,
 	)
 	body := map[string]interface{}{
-		"location": az.cfg.Default.Location,
+		"location": az.account.Location,
 		"zones":    []string{"1", "2", "3"},
 		"properties": map[string]interface{}{
 			"publicIPAllocationMethod": "Static",
@@ -528,8 +613,8 @@ func (az *AzureService) CreatePublicIP(ipName string) error {
 func (az *AzureService) UpdateNetworkInterface(nicName, newIPName string) error {
 	getUrl := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkInterfaces/%s?api-version=2023-04-01",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		nicName,
 	)
 
@@ -545,8 +630,8 @@ func (az *AzureService) UpdateNetworkInterface(nicName, newIPName string) error 
 	nic["properties"].(map[string]interface{})["ipConfigurations"].([]interface{})[0].(map[string]interface{})["properties"].(map[string]interface{})["publicIPAddress"] = map[string]interface{}{
 		"id": fmt.Sprintf(
 			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s",
-			az.cfg.Azure.SubId,
-			az.cfg.Default.ResourceGroup,
+			az.account.SubId,
+			az.account.ResourceGroup,
 			newIPName,
 		),
 	}
@@ -570,8 +655,8 @@ func (az *AzureService) UpdateNetworkInterface(nicName, newIPName string) error 
 func (az *AzureService) DeletePublicIP(ipName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s?api-version=2023-04-01",
-		az.cfg.Azure.SubId,
-		az.cfg.Default.ResourceGroup,
+		az.account.SubId,
+		az.account.ResourceGroup,
 		ipName,
 	)
 	resp, err := az.request("DELETE", url, nil)
