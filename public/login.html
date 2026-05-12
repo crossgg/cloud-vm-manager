@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Cache-Control" content="no-store">
+  <title>登录 - 多云 VM 管理面板</title>
+  <link rel="stylesheet" href="/public/style.css">
+</head>
+<body class="login-page">
+  <main class="login-screen standalone">
+    <form id="standalone-login-form" class="login-panel" autocomplete="off">
+      <div class="login-brand">
+        <span class="brand-mark">VM</span>
+        <div>
+          <h1>多云 VM 管理面板</h1>
+          <p>登录后才能查看和操作机器</p>
+        </div>
+      </div>
+
+      <label class="field">
+        <span>用户名</span>
+        <input id="login-username" type="text" autocomplete="username" required autofocus>
+      </label>
+      <label class="field">
+        <span>密码</span>
+        <input id="login-password" type="password" autocomplete="current-password" required>
+      </label>
+      <button class="primary-btn" type="submit">登录</button>
+      <div id="login-error" class="login-error" role="alert"></div>
+    </form>
+  </main>
+
+  <script src="/public/login.js"></script>
+</body>
+</html>

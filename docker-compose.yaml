@@ -1,11 +1,12 @@
 version: '3.8'
 
 services:
-  azure-vm-manager:
-    image: ghcr.io/crossgg/azure-vm-manager:latest
-    container_name: azure-vm-manager
+  cloud-vm-manager:
+    image: ghcr.io/crossgg/cloud-vm-manager:latest
+    container_name: cloud-vm-manager
     ports:
       - "3000:3000"
     volumes:
-      - ./config.yaml:/app/config.yaml
+      - ./config.conf:/app/config.conf
+      - ./keys:/app/keys
     restart: unless-stopped

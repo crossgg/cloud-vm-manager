@@ -1,168 +1,209 @@
-# Azure VM Manager
-
-一个轻量的 Azure 云实例管理服务，支持通过网页界面管理 Azure 虚拟机实例，包括启动、关机、重启和更换公网IP等功能。
+# Cloud VM Manager
 
 ![界面示例](pic/示例.jpg)
 
-## 功能特性
+一个轻量级网页工具，用于管理 Azure、GCP、OCI 虚拟机实例。
 
-- ✅ VM 实例列表展示
-- ✅ 启动/停止/重启 VM
-- ✅ 更换公网 IP 地址
-- ✅ 查看 VM 详细信息（区域、IP地址、资源组等）
-- ✅ 赠金余额显示
-- ✅ 操作日志记录
-- ✅ 多账户支持（配置文件）
+当前支持：
 
-## 技术栈
+- 按配置账号手动加载机器列表
+- 开机、关机、重启
+- 更换公网 IP
+- Azure 账号余额查询
+- Cloudflare DNS 更新，使用 API Token
+- 手动更新 DNS，或在换 IP 后按开关决定是否同步 DNS
+- 可选登录认证，适合需要暴露到公网的场景
+- 网页管理页修改登录账号密码，密码落盘前自动 bcrypt 加密
+- 网页管理页手动重载配置，修改配置后无需重启服务
 
-- **后端**: Go + Gin
-- **前端**: HTML + CSS + JavaScript
-- **API**: Azure REST API
-- **认证**: Service Principal
-
-## 快速开始
-
-### 环境要求
-
-- Go >= 1.22 或 Docker
-- Azure 订阅（学生订阅或正式订阅）
-- Azure Service Principal（需要 Contributor 权限）
-
-### 配置文件
-
-编辑 `config.yaml`，填入你的 Azure Service Principal 信息：
-
-```yaml
-azure:
-  tenant_id: "your-tenant-id"
-  client_id: "your-client-id"
-  client_secret: "your-client-secret"
-  subscription_id: "your-subscription-id"
-
-default:
-  resource_group: "your-resource-group"
-  location: "your-location"
-```
-
-### 本地运行
+## 本地运行
 
 ```bash
 go mod tidy
 go run .
 ```
 
-访问 http://localhost:3000
+访问：
 
-### Docker 运行
+```text
+http://localhost:3000
+```
+
+## 配置
+
+推荐使用 `config.conf`。程序读取顺序：
+
+```text
+config.conf -> config.ini -> config.yaml
+```
+
+复制示例：
 
 ```bash
-docker build -t azure-vm-manager .
-docker run -d -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml --name azure-vm-manager azure-vm-manager
-```>
+cp config.example.conf config.conf
+mkdir -p keys
+```
+
+密钥文件建议统一放到 `./keys`，容器内路径对应 `/app/keys`。例如：
+
+```ini
+key_file=/app/keys/gcp01.pem
+```
+
+详细字段说明见 [CONFIGURATION.md](CONFIGURATION.md)。
+
+## 宝塔反向代理
+
+如果项目需要公网访问，建议先在 `config.conf` 开启认证，并使用 HTTPS：
+
+```ini
+auth=begin
+[main]
+enabled=true
+username=admin
+password_hash=your-bcrypt-hash
+session_secret=your-random-secret-at-least-32-chars
+session_hours=12
+cookie_secure=true
+auth=end
+```
+
+宝塔面板操作：
+
+1. 网站 -> 添加站点，绑定你的域名并申请 SSL。
+2. 网站设置 -> 反向代理 -> 添加反向代理。
+3. 目标 URL 填：
+
+```text
+http://127.0.0.1:3000
+```
+
+4. 在反向代理的“配置文件”或“Nginx 高级配置”里确认增加这些字段：
+
+```nginx
+proxy_set_header Host $host;
+proxy_set_header X-Real-IP $remote_addr;
+proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+proxy_set_header X-Forwarded-Proto $scheme;
+proxy_set_header Upgrade $http_upgrade;
+proxy_set_header Connection "upgrade";
+```
+
+完整 location 示例：
+
+```nginx
+location / {
+    proxy_pass http://127.0.0.1:3000;
+    proxy_set_header Host $host;
+    proxy_set_header X-Real-IP $remote_addr;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header Upgrade $http_upgrade;
+    proxy_set_header Connection "upgrade";
+}
+```
+
+其中 `Host` 和 `X-Forwarded-Proto` 很重要：项目开启认证后会校验 POST 请求来源，缺少这两个头可能导致登录、保存配置、开关机等 POST 操作被拒绝。
 
 ## Docker 部署
 
-### 使用 Docker Compose
+下面三种方式都需要准备：
 
 ```bash
-## 1. 复制示例配置
-cp config.example.yaml config.yaml
-## 2. 编辑配置文件
-vim config.yaml
-## 3.启动
-docker-compose up -d
+cp config.example.conf config.conf
+mkdir -p keys
 ```
 
-### 手动构建
+把 GCP/OCI 等 PEM 或 JSON 密钥文件放入 `./keys`，配置文件里使用容器内路径 `/app/keys/xxx.pem`。
+
+### 方式一：Docker 自构建
 
 ```bash
-docker build -t azure-vm-manager .
-## 1. 复制示例配置
-cp config.example.yaml config.yaml
-## 2. 编辑配置文件
-vim config.yaml
-## 3.启动
-docker run -d -p 3000:3000 -v $(pwd)/config.yaml:/app/config.yaml --name azure-vm-manager azure-vm-manager
+docker build -t cloud-vm-manager:local .
+
+docker run -d \
+  --name cloud-vm-manager \
+  -p 3000:3000 \
+  -v $(pwd)/config.conf:/app/config.conf \
+  -v $(pwd)/keys:/app/keys \
+  --restart unless-stopped \
+  cloud-vm-manager:local
 ```
 
-## API 接口
+### 方式二：Docker Run 使用镜像
 
-| 接口                        | 方法   | 说明         |
-| ------------------------- | ---- | ---------- |
-| `/api/vms`                | GET  | 获取所有 VM 列表 |
-| `/api/vm/:name`           | GET  | 获取单个 VM 详情 |
-| `/api/vm/:name/start`     | POST | 启动 VM      |
-| `/api/vm/:name/stop`      | POST | 停止 VM      |
-| `/api/vm/:name/restart`   | POST | 重启 VM      |
-| `/api/vm/:name/change-ip` | POST | 更换公网 IP    |
-| `/api/balance`            | GET  | 获取赠金余额     |
-| `/api/refresh/:name`      | GET  | 刷新 VM 信息   |
+```bash
+docker pull ghcr.io/crossgg/cloud-vm-manager:latest
 
-## 配置说明
-
-### Service Principal 创建
-
-1. 登录 Azure CLI
-   ```bash
-   az login
-   ```
-2. 创建 Service Principal
-   ```bash
-   az ad sp create-for-rbac --name "azure-vm-manager" --role Contributor --scopes /subscriptions/{subscription-id}
-   ```
-3. 获取输出的 clientId, clientSecret, tenantId
-
-### IP 更换配置
-
-创建的公网 IP 配置：
-
-- SKU: Standard
-- 可用性区域: Zone-redundant (1, 2, 3)
-- DDoS 防护: 禁用
-- IP 版本: IPv4
-
-### 更换IP流程
-
-点击"更换IP"按钮后，系统会自动执行以下步骤：
-
-1. **创建新公网IP**
-   - 使用 Standard SKU
-   - 启用 Zone-redundant 高可用配置
-   - 禁用 DDoS 防护（学生订阅推荐）
-
-2. **更新网卡配置**
-   - 将网卡的 `ipconfig1` 关联到新创建的公网IP
-   - 网络配置自动更新
-
-3. **删除旧公网IP**
-   - 自动删除不再使用的旧公网IP资源
-   - 释放关联的IP地址
-
-> **注意**: 更换IP后，VM会获得新的公网IP地址，旧IP会被自动清理，无需手动操作。
-
-## 项目结构
-
-```
-.
-├── config.yaml          # 配置文件
-├── azure-service.js     # Azure API 封装
-├── server.js            # Express 服务器
-├── package.json         # 依赖配置
-├── Dockerfile           # Docker 构建文件
-├── docker-compose.yaml  # Docker Compose 配置
-└── public/
-    ├── index.html       # 前端页面
-    ├── style.css        # 样式文件
-    └── app.js           # 前端脚本
+docker run -d \
+  --name cloud-vm-manager \
+  -p 3000:3000 \
+  -v $(pwd)/config.conf:/app/config.conf \
+  -v $(pwd)/keys:/app/keys \
+  --restart unless-stopped \
+  ghcr.io/crossgg/cloud-vm-manager:latest
 ```
 
-## 注意事项
+### 方式三：Docker Compose
 
-1. 确保 Service Principal 具有足够的权限（建议 Contributor 角色）
-2. 学生订阅的赠金余额 API 可能受限，建议手动检查 Azure 门户
-3. 更换 IP 时会自动创建新的公网 IP 并删除旧的 IP，无需手动清理
-4. 建议使用环境变量或密钥管理工具存储敏感信息
+使用仓库里的 [docker-compose.yaml](docker-compose.yaml)：
+
+```bash
+docker compose up -d
+```
+
+当前 compose 会映射：
+
+```yaml
+volumes:
+  - ./config.conf:/app/config.conf
+  - ./keys:/app/keys
+```
+
+## DNS 更新
+
+DNS 更新只会在配置了 `dns` 绑定时启用。
+
+- 没有绑定：网页不显示“更新 DNS”按钮，换 IP 后 DNS 开关不可用。
+- 有绑定：机器卡片显示“更新 DNS”按钮，可以不换 IP 直接用当前公网 IP 更新 Cloudflare。
+- 换 IP 时：只有勾选“换 IP 后更新 DNS”才会在换 IP 成功后更新 Cloudflare。
+
+Cloudflare 使用 API Token：
+
+```http
+Authorization: Bearer <api_token>
+```
+
+不使用 Global API Key。
+
+## API
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/auth` | 查询认证状态 |
+| POST | `/api/login` | 登录 |
+| POST | `/api/logout` | 退出登录 |
+| GET | `/api/config/status` | 查询配置加载状态 |
+| POST | `/api/config/reload` | 手动重载配置 |
+| GET | `/api/settings/auth` | 查询认证配置状态 |
+| POST | `/api/settings/auth` | 修改认证配置 |
+| GET | `/api/accounts` | 获取本地配置账号列表，不访问云 API |
+| GET | `/api/vms?provider=&account=` | 加载指定账号机器列表 |
+| GET | `/api/vm/:provider/:account/:name` | 获取单台机器详情 |
+| POST | `/api/vm/:provider/:account/:name/start` | 开机 |
+| POST | `/api/vm/:provider/:account/:name/stop` | 关机 |
+| POST | `/api/vm/:provider/:account/:name/restart` | 重启 |
+| POST | `/api/vm/:provider/:account/:name/change-ip?update_dns=true` | 换 IP，可选更新 DNS |
+| POST | `/api/vm/:provider/:account/:name/update-dns` | 用当前公网 IP 手动更新 DNS |
+| GET | `/api/account/:provider/:account/balance` | Azure 账号余额 |
+
+## 注意
+
+- GCP 赠金余额和 OCI 余额查询已移除。
+- GCP 机器 ID 使用 `zone|instance-name`。
+- OCI 机器 ID 使用 instance OCID。
+- Cloudflare Token 建议只授予目标 Zone 的 DNS edit 权限。
+- `config.conf`、密钥文件、PEM 文件不要提交到仓库。
 
 ## License
 
