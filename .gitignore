@@ -5,6 +5,7 @@ config.ini
 .env
 app/key/
 app/keys/
+keys
 *.pem
 *.log
 .DS_Store
