@@ -12,9 +12,22 @@
 - Azure 账号余额查询
 - Cloudflare DNS 更新，使用 API Token
 - 手动更新 DNS，或在换 IP 后按开关决定是否同步 DNS
+- 网页可视化管理 DNS 绑定，每个 VM 实例可单独配置
+- DNS 管理页面：查看 Cloudflare 账号、DNS 绑定列表、导入/导出 dns.conf
 - 可选登录认证，适合需要暴露到公网的场景
 - 网页管理页修改登录账号密码，密码落盘前自动 bcrypt 加密
 - 网页管理页手动重载配置，修改配置后无需重启服务
+
+## 目录结构
+
+```text
+config/                  # 配置目录（Docker 映射 /app/config）
+├── config.conf          # 主配置：云账号 + 认证
+├── dns.conf             # DNS 配置：Cloudflare 账号 + DNS 绑定
+└── keys/                # 密钥文件目录
+    ├── gcp01.pem
+    └── oci.pem
+```
 
 ## 本地运行
 
@@ -31,30 +44,28 @@ http://localhost:3000
 
 ## 配置
 
-推荐使用 `config.conf`。程序读取顺序：
+程序读取顺序：
 
 ```text
-config.conf -> config.ini -> config.yaml
+config/config.conf -> config/config.ini -> config/config.yaml -> config.conf -> config.ini -> config.yaml
 ```
 
-复制示例：
+初始化：
 
 ```bash
-cp config.example.conf config.conf
-mkdir -p keys
+mkdir -p config/keys
+cp config.example.conf config/config.conf
 ```
 
-密钥文件建议统一放到 `./keys`，容器内路径对应 `/app/keys`。例如：
+DNS 配置（Cloudflare 账号和绑定）放在 `config/dns.conf`，也可以在网页 DNS 管理页面导入或通过 VM 实例页面可视化配置。
 
-```ini
-key_file=/app/keys/gcp01.pem
-```
+密钥文件放到 `config/keys/`，配置文件里使用容器内路径 `/app/config/keys/xxx.pem`。
 
 详细字段说明见 [CONFIGURATION.md](CONFIGURATION.md)。
 
 ## 宝塔反向代理
 
-如果项目需要公网访问，建议先在 `config.conf` 开启认证，并使用 HTTPS：
+如果项目需要公网访问，建议先在 `config/config.conf` 开启认证，并使用 HTTPS：
 
 ```ini
 auth=begin
@@ -78,7 +89,7 @@ auth=end
 http://127.0.0.1:3000
 ```
 
-4. 在反向代理的“配置文件”或“Nginx 高级配置”里确认增加这些字段：
+4. 在反向代理的"配置文件"或"Nginx 高级配置"里确认增加这些字段：
 
 ```nginx
 proxy_set_header Host $host;
@@ -107,14 +118,14 @@ location / {
 
 ## Docker 部署
 
-下面三种方式都需要准备：
+准备配置目录：
 
 ```bash
-cp config.example.conf config.conf
-mkdir -p keys
+mkdir -p config/keys
+cp config/config.example.conf config/config.conf
 ```
 
-把 GCP/OCI 等 PEM 或 JSON 密钥文件放入 `./keys`，配置文件里使用容器内路径 `/app/keys/xxx.pem`。
+把 GCP/OCI 等 PEM 或 JSON 密钥文件放入 `config/keys/`，配置文件里使用容器内路径 `/app/config/keys/xxx.pem`。
 
 ### 方式一：Docker 自构建
 
@@ -124,8 +135,7 @@ docker build -t cloud-vm-manager:local .
 docker run -d \
   --name cloud-vm-manager \
   -p 3000:3000 \
-  -v $(pwd)/config.conf:/app/config.conf \
-  -v $(pwd)/keys:/app/keys \
+  -v $(pwd)/config:/app/config \
   --restart unless-stopped \
   cloud-vm-manager:local
 ```
@@ -138,8 +148,7 @@ docker pull ghcr.io/crossgg/cloud-vm-manager:latest
 docker run -d \
   --name cloud-vm-manager \
   -p 3000:3000 \
-  -v $(pwd)/config.conf:/app/config.conf \
-  -v $(pwd)/keys:/app/keys \
+  -v $(pwd)/config:/app/config \
   --restart unless-stopped \
   ghcr.io/crossgg/cloud-vm-manager:latest
 ```
@@ -156,25 +165,55 @@ docker compose up -d
 
 ```yaml
 volumes:
-  - ./config.conf:/app/config.conf
-  - ./keys:/app/keys
+  - ./config:/app/config
 ```
 
-## DNS 更新
+## DNS 管理
 
-DNS 更新只会在配置了 `dns` 绑定时启用。
+### 网页管理
 
-- 没有绑定：网页不显示“更新 DNS”按钮，换 IP 后 DNS 开关不可用。
-- 有绑定：机器卡片显示“更新 DNS”按钮，可以不换 IP 直接用当前公网 IP 更新 Cloudflare。
-- 换 IP 时：只有勾选“换 IP 后更新 DNS”才会在换 IP 成功后更新 Cloudflare。
+- **DNS 管理页面**：查看 Cloudflare 账号（仅显示名称和备注，隐藏敏感信息）、DNS 绑定列表（支持删除）、导入 dns.conf、预览当前配置（api_token 已脱敏）
+- **VM 实例页面**：每个 VM 卡片有「DNS 绑定」按钮，点击弹出可视化配置面板，自动填充 provider/account/vm 信息
 
-Cloudflare 使用 API Token：
+### 配置文件
 
-```http
-Authorization: Bearer <api_token>
+DNS 配置独立存放在 `config/dns.conf`：
+
+```ini
+cloudflare=begin
+[cf01]
+remark=主站 Cloudflare
+api_token=your-cloudflare-api-token
+zone_id=your-zone-id
+cloudflare=end
+
+dns=begin
+[my-binding]
+cloudflare=cf01
+provider=azure
+account=az001
+vm=myvm
+domain=vm.example.com
+type=A
+ttl=1
+proxied=false
+dns=end
 ```
 
-不使用 Global API Key。
+### 行为
+
+- 没有绑定：网页不显示"更新 DNS"按钮，换 IP 后 DNS 开关不可用。
+- 有绑定：机器卡片显示"更新 DNS"按钮，可以不换 IP 直接用当前公网 IP 更新 Cloudflare。
+- 换 IP 时：只有勾选"换 IP 后更新 DNS"才会在换 IP 成功后更新 Cloudflare。
+
+Cloudflare 使用 API Token（不使用 Global API Key）。
+
+## 安全说明
+
+- Cloudflare API Token 和 Zone ID 不会在网页前端显示，仅在导入/保存时写入配置文件
+- dns.conf 原始预览自动脱敏 `api_token`、`client_secret`、`password` 等敏感字段
+- 认证开启后，所有 API 需要登录后才能访问
+- 配置文件、密钥文件不要提交到 Git 仓库
 
 ## API
 
@@ -187,23 +226,28 @@ Authorization: Bearer <api_token>
 | POST | `/api/config/reload` | 手动重载配置 |
 | GET | `/api/settings/auth` | 查询认证配置状态 |
 | POST | `/api/settings/auth` | 修改认证配置 |
-| GET | `/api/accounts` | 获取本地配置账号列表，不访问云 API |
+| GET | `/api/accounts` | 获取本地配置账号列表 |
 | GET | `/api/vms?provider=&account=` | 加载指定账号机器列表 |
 | GET | `/api/vm/:provider/:account/:name` | 获取单台机器详情 |
 | POST | `/api/vm/:provider/:account/:name/start` | 开机 |
 | POST | `/api/vm/:provider/:account/:name/stop` | 关机 |
 | POST | `/api/vm/:provider/:account/:name/restart` | 重启 |
-| POST | `/api/vm/:provider/:account/:name/change-ip?update_dns=true` | 换 IP，可选更新 DNS |
-| POST | `/api/vm/:provider/:account/:name/update-dns` | 用当前公网 IP 手动更新 DNS |
-| GET | `/api/account/:provider/:account/balance` | Azure 账号余额 |
+| POST | `/api/vm/:provider/:account/:name/change-ip` | 换 IP |
+| POST | `/api/vm/:provider/:account/:name/update-dns` | 更新 DNS |
+| GET | `/api/account/:provider/:account/balance` | Azure 余额 |
+| GET | `/api/dns/cloudflare` | Cloudflare 账号列表（脱敏） |
+| GET | `/api/dns/bindings` | DNS 绑定列表 |
+| GET | `/api/dns/raw` | 预览 dns.conf（脱敏） |
+| POST | `/api/dns/delete-binding` | 删除 DNS 绑定 |
+| GET | `/api/vm/:provider/:account/:name/dns` | VM 的 DNS 绑定 |
+| POST | `/api/vm/:provider/:account/:name/dns` | 保存 VM 的 DNS 绑定 |
 
 ## 注意
 
-- GCP 赠金余额和 OCI 余额查询已移除。
 - GCP 机器 ID 使用 `zone|instance-name`。
 - OCI 机器 ID 使用 instance OCID。
 - Cloudflare Token 建议只授予目标 Zone 的 DNS edit 权限。
-- `config.conf`、密钥文件、PEM 文件不要提交到仓库。
+- `config/` 目录下的所有文件（config.conf、dns.conf、keys/）不要提交到仓库。
 
 ## License
 

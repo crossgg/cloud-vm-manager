@@ -1,9 +1,7 @@
 .git
 .github
-config.conf
-config.ini
-config.yaml
-keys
-app/keys
+config/config.conf
+config/keys
+config/dns.conf
 *.pem
 *.log

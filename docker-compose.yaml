@@ -7,6 +7,5 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./config.conf:/app/config.conf
-      - ./keys:/app/keys
+      - ./config:/app/config
     restart: unless-stopped

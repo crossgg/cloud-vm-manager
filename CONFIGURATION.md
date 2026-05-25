@@ -1,6 +1,19 @@
 # 配置说明
 
-程序会按顺序读取 `config.conf`、`config.ini`、`config.yaml`。推荐使用 `config.conf` 的分段格式，便于多账号和分组管理。
+程序优先读取 `config/config.conf`，也兼容根目录的 `config.conf`。推荐使用 `config/` 目录统一管理配置和密钥。
+
+## 目录结构
+
+```text
+config/
+├── config.conf          # 主配置：云账号（Azure/GCP/OCI）+ 登录认证
+├── dns.conf             # DNS 配置：Cloudflare 账号 + DNS 绑定（可通过网页管理）
+└── keys/                # 密钥文件
+    ├── gcp01.pem
+    └── oci.pem
+```
+
+Docker 部署时映射 `./config:/app/config`，密钥文件路径使用 `/app/config/keys/xxx.pem`。
 
 ## 登录认证
 
@@ -83,13 +96,13 @@ password_hash=生成出来的-bcrypt-哈希
 
 不要把生成脚本里的明文密码提交到仓库。生成完成后可以删除临时脚本。
 
-也可以在网页右侧的“管理”页面修改登录用户名和密码。网页里输入的是明文新密码，但后端保存到配置文件前会自动生成 bcrypt 哈希，配置文件中仍然只保存 `password_hash`。
+也可以在网页右侧的"管理"页面修改登录用户名和密码。网页里输入的是明文新密码，但后端保存到配置文件前会自动生成 bcrypt 哈希，配置文件中仍然只保存 `password_hash`。
 
 ## 配置重载
 
-程序不会后台轮询配置文件。修改 `config.conf`、`config.ini` 或 `config.yaml` 后，需要在网页“管理”页面点击“重载配置”按钮，程序才会重新读取配置，并重建 Azure/GCP/OCI 账号、Cloudflare DNS 绑定和登录认证配置。
+程序不会后台轮询配置文件。修改 `config/config.conf` 或 `config/dns.conf` 后，需要在网页"管理"页面点击"重载配置"按钮，程序才会重新读取配置。
 
-在网页“管理”页面保存登录认证配置时，后端会先写入配置文件，然后自动执行一次配置重载，因此保存后会立即生效。重载失败时，程序会继续使用上一次成功加载的配置，并在管理页面显示错误信息。
+在网页"管理"页面保存登录认证配置时，后端会先写入配置文件，然后自动执行一次配置重载，因此保存后会立即生效。重载失败时，程序会继续使用上一次成功加载的配置，并在管理页面显示错误信息。
 
 ## Azure
 
@@ -133,10 +146,10 @@ azure=end
 ```ini
 gcp=begin
 [gcp01]
-group=gcp                   # 前端分组名称
-project_id=my-project       # GCP Project ID
+group=gcp                                    # 前端分组名称
+project_id=my-project                        # GCP Project ID
 client_email=sa@project.iam.gserviceaccount.com
-key_file=/app/keys/gcp.pem  # service account JSON 或 RSA private key PEM
+key_file=/app/config/keys/gcp.pem            # service account JSON 或 RSA private key PEM
 gcp=end
 ```
 
@@ -159,13 +172,13 @@ vm=asia-east1-a|vm-01
 ```ini
 oci=begin
 [oci-jp]
-group=oci                         # 前端分组名称
-user=ocid1.user.oc1...            # User OCID
-fingerprint=xx:xx:xx              # API key fingerprint
-tenancy=ocid1.tenancy.oc1...      # Tenancy OCID
+group=oci                                    # 前端分组名称
+user=ocid1.user.oc1...                       # User OCID
+fingerprint=xx:xx:xx                         # API key fingerprint
+tenancy=ocid1.tenancy.oc1...                 # Tenancy OCID
 compartment_id=ocid1.compartment.oc1...
 region=ap-tokyo-1
-key_file=/app/keys/oci.pem        # OCI API private key PEM
+key_file=/app/config/keys/oci.pem            # OCI API private key PEM
 oci=end
 ```
 
@@ -173,19 +186,29 @@ OCI 机器 ID 在 DNS 绑定里写 instance OCID。
 
 ## Cloudflare DNS
 
+DNS 配置独立存放在 `config/dns.conf`，也可以通过网页 DNS 管理页面导入和管理。
+
 只支持 API Token，不使用 Global API Key。Token 至少需要目标 zone 的 DNS edit 权限。
 
 ```ini
 cloudflare=begin
 [cf01]
-api_token=your-cloudflare-api-token  # Cloudflare API Token
-zone_id=your-zone-id                 # Cloudflare Zone ID
+remark=主站 Cloudflare                        # 可选，账号备注
+api_token=your-cloudflare-api-token           # Cloudflare API Token
+zone_id=your-zone-id                          # Cloudflare Zone ID
 cloudflare=end
 ```
 
+> **安全说明**：Cloudflare 的 `api_token` 和 `zone_id` 不会在网页前端显示。网页 DNS 管理页只显示账号名称和备注。dns.conf 预览也会自动脱敏敏感字段。
+
 ## DNS 绑定
 
-`dns` 段定义“某台机器的公网 IP 应绑定到哪个域名”。只有配置了绑定的机器，网页才会显示“更新 DNS”按钮和“换 IP 后更新 DNS”开关。
+`dns` 段定义"某台机器的公网 IP 应绑定到哪个域名"。只有配置了绑定的机器，网页才会显示"更新 DNS"按钮和"换 IP 后更新 DNS"开关。
+
+DNS 绑定可以：
+- 手动编辑 `config/dns.conf`
+- 在网页 DNS 管理页面导入
+- 在每个 VM 卡片上点击「DNS 绑定」按钮可视化配置
 
 ```ini
 dns=begin

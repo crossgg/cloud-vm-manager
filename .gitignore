@@ -1,7 +1,6 @@
-node_modules/
-config.yaml
-config.conf
-config.ini
+config/config.conf
+config/dns.conf
+config/keys
 .env
 app/key/
 app/keys/
