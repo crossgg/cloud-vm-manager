@@ -42,6 +42,16 @@ func main() {
 	r.POST("/api/vm/:provider/:account/:name/update-dns", updateDNS)
 	r.GET("/api/refresh/:provider/:account/:name", refreshVM)
 
+	// DNS management APIs
+	r.GET("/api/dns/cloudflare", listCloudflareAccounts)
+	r.POST("/api/dns/cloudflare", saveCloudflareAccounts)
+	r.GET("/api/dns/bindings", listDNSBindings)
+	r.POST("/api/dns/bindings", saveDNSBindings)
+	r.GET("/api/dns/raw", getDNSConfigRaw)
+	r.POST("/api/dns/delete-binding", deleteDNSBinding)
+	r.GET("/api/vm/:provider/:account/:name/dns", getVMDNSBindings)
+	r.POST("/api/vm/:provider/:account/:name/dns", saveVMDNSBindings)
+
 	authService.RegisterPages(r)
 
 	_ = r.Run(":3000")

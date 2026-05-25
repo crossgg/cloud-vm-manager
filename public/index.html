@@ -27,6 +27,7 @@
         <nav>
           <a href="#" class="nav-item active" data-section="overview">概览</a>
           <a href="#" class="nav-item" data-section="instances">实例管理</a>
+          <a href="#" class="nav-item" data-section="dns">DNS 管理</a>
           <a href="#" class="nav-item" data-section="settings">管理</a>
         </nav>
       </aside>
@@ -86,6 +87,58 @@
           </div>
         </section>
 
+        <!-- DNS Management Section -->
+        <section id="dns-section" class="section">
+          <div class="section-title">
+            <div>
+              <h2>DNS 管理</h2>
+              <p>管理 Cloudflare 账号和 DNS 绑定配置。</p>
+            </div>
+            <button id="dns-reload-btn" class="secondary-btn" type="button">重载 DNS 配置</button>
+          </div>
+
+          <!-- Cloudflare Accounts Panel -->
+          <div class="settings-panel dns-bindings-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>Cloudflare 账号</h3>
+                <p>配置 Cloudflare 账号、备注、API Token 和 Zone ID。API Token 和 Zone ID 在已存在时将显示为掩码，若不修改请保留掩码。</p>
+              </div>
+              <button id="add-cf-account-btn" class="secondary-btn" type="button">+ 添加账号</button>
+            </div>
+            <div id="cf-accounts-list" class="dns-items-list">
+              <div class="empty-state compact">加载中...</div>
+            </div>
+            <button id="save-cf-accounts-btn" class="primary-btn" type="button">保存 Cloudflare 配置</button>
+            <div id="cf-message" class="form-message"></div>
+          </div>
+
+          <!-- DNS Bindings Panel -->
+          <div class="settings-panel dns-bindings-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>DNS 绑定列表</h3>
+                <p>所有 DNS 绑定配置。也可在每个 VM 卡片的「DNS 绑定」按钮中管理。</p>
+              </div>
+            </div>
+            <div id="dns-bindings-list" class="dns-items-list">
+              <div class="empty-state compact">加载中...</div>
+            </div>
+          </div>
+
+          <!-- Raw dns.conf display -->
+          <div class="settings-panel dns-raw-panel">
+            <div class="panel-heading">
+              <div>
+                <h3>当前 dns.conf</h3>
+                <p>只读预览，敏感信息与域名信息已脱敏。</p>
+              </div>
+              <button id="dns-raw-refresh-btn" class="secondary-btn" type="button">刷新</button>
+            </div>
+            <pre id="dns-raw-content" class="dns-raw-pre">加载中...</pre>
+          </div>
+        </section>
+
         <section id="settings-section" class="section">
           <div class="section-title">
             <div>
@@ -138,7 +191,7 @@
               <div class="panel-heading">
                 <div>
                   <h3>配置状态</h3>
-              <p>修改配置文件后，点击“重载配置”才会生效。</p>
+              <p>修改配置文件后，点击"重载配置"才会生效。</p>
                 </div>
               </div>
               <dl class="settings-meta">
@@ -164,6 +217,24 @@
       </div>
       <div id="logs" class="logs-container"></div>
     </section>
+  </div>
+
+  <!-- DNS Binding Modal for VM -->
+  <div id="dns-binding-modal" class="modal-overlay" hidden>
+    <div class="modal-panel">
+      <div class="modal-header">
+        <h3 id="dns-modal-title">DNS 绑定配置</h3>
+        <button id="dns-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div id="dns-modal-body" class="modal-body">
+        <div class="empty-state compact">加载中...</div>
+      </div>
+      <div class="modal-footer">
+        <button id="dns-modal-add" class="secondary-btn" type="button">+ 添加绑定</button>
+        <button id="dns-modal-save" class="primary-btn" type="button">保存</button>
+      </div>
+      <div id="dns-modal-message" class="form-message"></div>
+    </div>
   </div>
 
   <script src="/public/app.js"></script>

@@ -51,6 +51,9 @@ function bindNavigation() {
         loadAuthSettings();
         loadConfigStatus();
       }
+      if (section === 'dns') {
+        loadDNSPage();
+      }
     });
   });
 }
@@ -303,6 +306,7 @@ function renderVMCard(vm) {
         <button class="action-btn restart" type="button" data-action="restart">重启</button>
         <button class="action-btn change-ip" type="button" data-action="change-ip">换 IP</button>
         ${dnsEnabled ? '<button class="action-btn dns" type="button" data-action="update-dns">更新 DNS</button>' : ''}
+        <button class="action-btn dns-bind" type="button" data-action="dns-bind">DNS 绑定</button>
       </div>
     </article>
   `;
@@ -326,6 +330,10 @@ async function handleVMAction(button) {
     'update-dns': '更新 DNS'
   };
 
+  if (action === 'dns-bind') {
+    openDNSBindingModal(vm);
+    return;
+  }
   if (action === 'start' && vm.status === 'VM running') {
     addLog(`VM ${vm.name} 已经在运行中。`, 'info');
     return;
@@ -558,3 +566,304 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value);
 }
+
+// ==================== DNS Management Page ====================
+
+function loadDNSPage() {
+  loadCFAccounts();
+  loadDNSBindingsList();
+  loadDNSRaw();
+}
+
+function renderCFAccountRow(a = {}) {
+  const name = a.name || '';
+  const remark = a.remark || '';
+  const apiToken = a.api_token || '';
+  const zoneId = a.zone_id || '';
+  
+  return `
+    <div class="dns-cf-row cf-row-item">
+      <div class="dns-cf-fields">
+        <div class="field compact">
+          <span>账号名称</span>
+          <input type="text" class="cf-name-input" value="${escapeAttr(name)}" placeholder="例：cf01" ${name ? 'disabled' : ''}>
+        </div>
+        <div class="field compact">
+          <span>备注</span>
+          <input type="text" class="cf-remark-input" value="${escapeAttr(remark)}" placeholder="备注/说明">
+        </div>
+        <div class="field compact">
+          <span>API Token</span>
+          <input type="text" class="cf-token-input" value="${escapeAttr(apiToken)}" placeholder="API Token">
+        </div>
+        <div class="field compact">
+          <span>Zone ID</span>
+          <input type="text" class="cf-zone-input" value="${escapeAttr(zoneId)}" placeholder="Zone ID">
+        </div>
+      </div>
+      <button class="ghost-btn dns-remove-btn cf-row-delete-btn" type="button">删除</button>
+    </div>
+  `;
+}
+
+function addCFAccountRow() {
+  const el = document.getElementById('cf-accounts-list');
+  if (el.querySelector('.empty-state')) {
+    el.innerHTML = '';
+  }
+  const div = document.createElement('div');
+  div.innerHTML = renderCFAccountRow();
+  el.appendChild(div.firstElementChild);
+}
+
+async function loadCFAccounts() {
+  const el = document.getElementById('cf-accounts-list');
+  try {
+    const accounts = await fetchJSON('/api/dns/cloudflare');
+    if (!Array.isArray(accounts) || accounts.length === 0) {
+      el.innerHTML = '<div class="empty-state compact">暂无 Cloudflare 账号配置。</div>';
+      return;
+    }
+    el.innerHTML = accounts.map(a => renderCFAccountRow(a)).join('');
+  } catch (err) {
+    el.innerHTML = `<div class="empty-state compact error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function saveCFAccounts() {
+  const el = document.getElementById('cf-accounts-list');
+  const rows = el.querySelectorAll('.cf-row-item');
+  const accounts = [];
+  
+  for (const row of rows) {
+    const nameInput = row.querySelector('.cf-name-input');
+    const name = nameInput.value.trim();
+    if (!name) continue;
+    
+    const remark = row.querySelector('.cf-remark-input').value.trim();
+    const apiToken = row.querySelector('.cf-token-input').value.trim();
+    const zoneId = row.querySelector('.cf-zone-input').value.trim();
+    
+    accounts.push({ name, remark, api_token: apiToken, zone_id: zoneId });
+  }
+  
+  const msgEl = document.getElementById('cf-message');
+  msgEl.textContent = '保存中...';
+  msgEl.className = 'form-message';
+  
+  try {
+    await fetchJSON('/api/dns/cloudflare', {
+      method: 'POST',
+      body: { accounts }
+    });
+    msgEl.textContent = 'Cloudflare 配置保存成功。';
+    msgEl.className = 'form-message success';
+    addLog('Cloudflare 配置已更新并自动重载。', 'success');
+    loadDNSPage();
+  } catch (err) {
+    msgEl.textContent = err.message;
+    msgEl.className = 'form-message error';
+  }
+}
+
+async function loadDNSBindingsList() {
+  const el = document.getElementById('dns-bindings-list');
+  try {
+    const bindings = await fetchJSON('/api/dns/bindings');
+    if (!Array.isArray(bindings) || bindings.length === 0) {
+      el.innerHTML = '<div class="empty-state compact">暂无 DNS 绑定。可在 VM 卡片中添加。</div>';
+      return;
+    }
+    el.innerHTML = bindings.map(b => `
+      <div class="dns-binding-card">
+        <div class="dns-binding-info">
+          <strong>${escapeHtml(b.name)}</strong>
+          <span>${escapeHtml(b.provider)}/${escapeHtml(b.account)} → ${escapeHtml(b.domain)}</span>
+          <span class="dns-binding-detail">CF: ${escapeHtml(b.cloudflare)} | VM: ${escapeHtml(b.vm)} | ${escapeHtml(b.type)} | TTL=${b.ttl} | Proxied=${b.proxied}</span>
+        </div>
+        <button class="ghost-btn dns-delete-binding-btn" type="button" data-name="${escapeAttr(b.name)}">删除</button>
+      </div>
+    `).join('');
+  } catch (err) {
+    el.innerHTML = `<div class="empty-state compact error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+async function deleteDNSBindingByName(name) {
+  if (!confirm(`确认删除 DNS 绑定「${name}」？`)) return;
+  try {
+    await fetchJSON('/api/dns/delete-binding', { method: 'POST', body: { name } });
+    addLog(`已删除 DNS 绑定：${name}`, 'success');
+    loadDNSBindingsList();
+    loadDNSRaw();
+    if (selectedAccount) fetchVMs();
+  } catch (err) {
+    addLog(`删除失败：${err.message}`, 'error');
+  }
+}
+
+async function loadDNSRaw() {
+  const el = document.getElementById('dns-raw-content');
+  try {
+    const data = await fetchJSON('/api/dns/raw');
+    el.textContent = data.content || '（空）';
+  } catch (err) {
+    el.textContent = `加载失败：${err.message}`;
+  }
+}
+
+async function reloadDNSConfig() {
+  try {
+    await fetchJSON('/api/config/reload', { method: 'POST' });
+    addLog('DNS 配置已重载。', 'success');
+    loadDNSPage();
+  } catch (err) {
+    addLog(`重载失败：${err.message}`, 'error');
+  }
+}
+
+// Bind DNS page events
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('dns-reload-btn')?.addEventListener('click', reloadDNSConfig);
+  document.getElementById('add-cf-account-btn')?.addEventListener('click', addCFAccountRow);
+  document.getElementById('save-cf-accounts-btn')?.addEventListener('click', saveCFAccounts);
+  document.getElementById('dns-raw-refresh-btn')?.addEventListener('click', loadDNSRaw);
+  
+  // Delete binding delegation
+  document.getElementById('dns-bindings-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('.dns-delete-binding-btn');
+    if (btn) deleteDNSBindingByName(btn.dataset.name);
+  });
+  
+  // Delete CF account row delegation
+  document.getElementById('cf-accounts-list')?.addEventListener('click', e => {
+    const btn = e.target.closest('.cf-row-delete-btn');
+    if (btn) {
+      const row = btn.closest('.cf-row-item');
+      if (row) row.remove();
+      const el = document.getElementById('cf-accounts-list');
+      if (el.children.length === 0) {
+        el.innerHTML = '<div class="empty-state compact">暂无 Cloudflare 账号配置。</div>';
+      }
+    }
+  });
+});
+
+let dnsModalVM = null;
+let dnsModalCFAccounts = [];
+
+function openDNSBindingModal(vm) {
+  dnsModalVM = vm;
+  const modal = document.getElementById('dns-binding-modal');
+  document.getElementById('dns-modal-title').textContent = `DNS 绑定 - ${vm.provider}/${vm.accountId}/${vm.id}`;
+  document.getElementById('dns-modal-body').innerHTML = '<div class="empty-state compact">加载中...</div>';
+  document.getElementById('dns-modal-message').textContent = '';
+  modal.hidden = false;
+  loadVMDNSBindings(vm);
+}
+
+function closeDNSModal() {
+  document.getElementById('dns-binding-modal').hidden = true;
+  dnsModalVM = null;
+}
+
+async function loadVMDNSBindings(vm) {
+  try {
+    const data = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/dns`);
+    dnsModalCFAccounts = Array.isArray(data.cloudflare_accounts) ? data.cloudflare_accounts : [];
+    const bindings = Array.isArray(data.bindings) ? data.bindings : [];
+    renderDNSModalBindings(bindings);
+  } catch (err) {
+    document.getElementById('dns-modal-body').innerHTML = `<div class="empty-state compact error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function cfSelectHtml(selected) {
+  return dnsModalCFAccounts.map(cf => `<option value="${escapeAttr(cf.name)}" ${cf.name === selected ? 'selected' : ''}>${escapeHtml(cf.name)}</option>`).join('');
+}
+
+function renderDNSModalBindings(bindings) {
+  const body = document.getElementById('dns-modal-body');
+  if (bindings.length === 0) {
+    body.innerHTML = '<div class="empty-state compact">暂无 DNS 绑定，点击下方“添加绑定”创建。</div>';
+    return;
+  }
+  body.innerHTML = bindings.map((b, i) => dnsBindingRowHtml(b, i)).join('');
+}
+
+function dnsBindingRowHtml(b, i) {
+  return `<div class="dns-binding-row" data-index="${i}">
+  <div class="dns-binding-fields">
+    <label class="field compact"><span>绑定名称</span><input type="text" class="dns-f-name" value="${escapeAttr(b.name || '')}"></label>
+    <label class="field compact"><span>Cloudflare</span><select class="dns-f-cf">${cfSelectHtml(b.cloudflare)}</select></label>
+    <label class="field compact"><span>域名</span><input type="text" class="dns-f-domain" value="${escapeAttr(b.domain || '')}" placeholder="sub.example.com"></label>
+    <label class="field compact"><span>类型</span><select class="dns-f-type"><option value="A" ${b.type==='A'?'selected':''}>A</option><option value="AAAA" ${b.type==='AAAA'?'selected':''}>AAAA</option><option value="CNAME" ${b.type==='CNAME'?'selected':''}>CNAME</option></select></label>
+    <label class="field compact"><span>TTL</span><input type="number" class="dns-f-ttl" value="${b.ttl||1}" min="1"></label>
+    <label class="switch-row compact"><input type="checkbox" class="dns-f-proxied" ${b.proxied?'checked':''}><span>Proxied</span></label>
+  </div>
+  <button class="ghost-btn dns-remove-btn" type="button" data-index="${i}">删除</button>
+</div>`;
+}
+
+function addDNSBindingRow() {
+  if (!dnsModalVM) return;
+  const body = document.getElementById('dns-modal-body');
+  if (body.querySelector('.empty-state')) body.innerHTML = '';
+  const vm = dnsModalVM;
+  const idx = body.querySelectorAll('.dns-binding-row').length;
+  const name = `${vm.provider}-${vm.accountId}-${vm.id}-${idx}`;
+  const cf = dnsModalCFAccounts.length > 0 ? dnsModalCFAccounts[0].name : '';
+  body.insertAdjacentHTML('beforeend', dnsBindingRowHtml({ name, cloudflare: cf, domain: '', type: 'A', ttl: 1, proxied: false }, idx));
+}
+
+function removeDNSBindingRow(index) {
+  const body = document.getElementById('dns-modal-body');
+  const row = body.querySelector(`.dns-binding-row[data-index="${index}"]`);
+  if (row) row.remove();
+  if (!body.querySelector('.dns-binding-row')) {
+    body.innerHTML = '<div class="empty-state compact">暂无 DNS 绑定</div>';
+  }
+}
+
+async function saveDNSModal() {
+  if (!dnsModalVM) return;
+  const vm = dnsModalVM;
+  const rows = document.getElementById('dns-modal-body').querySelectorAll('.dns-binding-row');
+  const msgEl = document.getElementById('dns-modal-message');
+  const bindings = [];
+  for (const row of rows) {
+    bindings.push({
+      name: row.querySelector('.dns-f-name')?.value?.trim() || '',
+      cloudflare: row.querySelector('.dns-f-cf')?.value || '',
+      domain: row.querySelector('.dns-f-domain')?.value?.trim() || '',
+      type: row.querySelector('.dns-f-type')?.value || 'A',
+      ttl: Number(row.querySelector('.dns-f-ttl')?.value) || 1,
+      proxied: row.querySelector('.dns-f-proxied')?.checked || false
+    });
+  }
+  msgEl.textContent = '保存中...';
+  msgEl.className = 'form-message';
+  try {
+    await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/dns`, { method: 'POST', body: { bindings } });
+    msgEl.textContent = '已保存并重载生效。';
+    msgEl.className = 'form-message success';
+    addLog(`DNS 绑定已保存：${vm.provider}/${vm.accountId}/${vm.id}`, 'success');
+    if (selectedAccount) fetchVMs();
+  } catch (err) {
+    msgEl.textContent = err.message;
+    msgEl.className = 'form-message error';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('dns-modal-close')?.addEventListener('click', closeDNSModal);
+  document.getElementById('dns-modal-add')?.addEventListener('click', addDNSBindingRow);
+  document.getElementById('dns-modal-save')?.addEventListener('click', saveDNSModal);
+  document.getElementById('dns-binding-modal')?.addEventListener('click', e => {
+    if (e.target.id === 'dns-binding-modal') closeDNSModal();
+  });
+  document.getElementById('dns-modal-body')?.addEventListener('click', e => {
+    const btn = e.target.closest('.dns-remove-btn');
+    if (btn) removeDNSBindingRow(btn.dataset.index);
+  });
+});

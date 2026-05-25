@@ -16,7 +16,7 @@ WORKDIR /app/
 
 COPY --from=builder /app/cloud-vm-manager .
 COPY --from=builder /app/public ./public
-RUN mkdir -p /app/keys
+RUN mkdir -p /app/config/keys
 
 EXPOSE 3000
 

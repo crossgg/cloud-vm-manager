@@ -80,6 +80,15 @@ func currentConfigPath() string {
 	return runtimeState.configPath
 }
 
+func currentDNSPath() string {
+	runtimeState.mu.RLock()
+	defer runtimeState.mu.RUnlock()
+	if runtimeState.cfg != nil && runtimeState.cfg.DNSPath != "" {
+		return runtimeState.cfg.DNSPath
+	}
+	return dnsConfigPath(runtimeState.configPath)
+}
+
 func currentAuthConfig() AuthConfig {
 	runtimeState.mu.RLock()
 	defer runtimeState.mu.RUnlock()

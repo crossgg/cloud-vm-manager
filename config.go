@@ -14,6 +14,7 @@ type Config struct {
 	Azure         AzureConfig        `yaml:"azure"`
 	Default       DefaultConfig      `yaml:"default"`
 	SourcePath    string             `yaml:"-"`
+	DNSPath       string             `yaml:"-"`
 	AzureAccounts []AzureConfig      `yaml:"-"`
 	GCPAccounts   []GCPConfig        `yaml:"-"`
 	OCIAccounts   []OCIConfig        `yaml:"-"`
@@ -59,6 +60,7 @@ type DefaultConfig struct {
 
 type CloudflareConfig struct {
 	Name     string
+	Remark   string
 	APIToken string
 	ZoneID   string
 }
@@ -84,6 +86,26 @@ type AuthConfig struct {
 	CookieSecure  bool   `yaml:"cookie_secure"`
 }
 
+// configSearchPaths returns the list of paths to search for the main config file.
+func configSearchPaths() []string {
+	return []string{
+		"config/config.conf",
+		"config/config.ini",
+		"config/config.yaml",
+		"config.conf",
+		"config.ini",
+		"config.yaml",
+	}
+}
+
+// dnsConfigPath returns the DNS config file path relative to the main config.
+func dnsConfigPath(mainPath string) string {
+	if strings.HasPrefix(mainPath, "config/") || strings.HasPrefix(mainPath, "config\\") {
+		return "config/dns.conf"
+	}
+	return "dns.conf"
+}
+
 func LoadConfig() (*Config, error) {
 	cfg, _, err := LoadConfigWithPath()
 	return cfg, err
@@ -94,7 +116,7 @@ func LoadConfigWithPath() (*Config, string, error) {
 	var err error
 	configPath := ""
 
-	for _, path := range []string{"config.conf", "config.ini", "config.yaml"} {
+	for _, path := range configSearchPaths() {
 		data, err = os.ReadFile(path)
 		if err == nil {
 			configPath = path
@@ -112,17 +134,126 @@ func LoadConfigWithPath() (*Config, string, error) {
 			return nil, "", err
 		}
 		cfg.SourcePath = configPath
-		return cfg, configPath, nil
+	} else {
+		var yamlCfg Config
+		if err := yaml.Unmarshal(data, &yamlCfg); err != nil {
+			return nil, "", err
+		}
+		yamlCfg.normalize()
+		yamlCfg.SourcePath = configPath
+		cfg = &yamlCfg
 	}
 
-	var yamlCfg Config
-	if err := yaml.Unmarshal(data, &yamlCfg); err != nil {
-		return nil, "", err
+	// Load DNS config from separate file
+	dnsPath := dnsConfigPath(configPath)
+	cfg.DNSPath = dnsPath
+	if dnsData, dnsErr := os.ReadFile(dnsPath); dnsErr == nil {
+		if err := mergeDNSConfig(cfg, string(dnsData)); err != nil {
+			return nil, "", fmt.Errorf("parse dns config: %w", err)
+		}
 	}
 
-	yamlCfg.normalize()
-	yamlCfg.SourcePath = configPath
-	return &yamlCfg, configPath, nil
+	return cfg, configPath, nil
+}
+
+// mergeDNSConfig parses cloudflare and dns blocks from dns.conf and merges into cfg.
+// If the main config already had cloudflare/dns from the old format, dns.conf takes precedence.
+func mergeDNSConfig(cfg *Config, content string) error {
+	sections := map[string]map[string]map[string]string{
+		"cloudflare": {},
+		"dns":        {},
+	}
+
+	currentProvider := ""
+	currentName := ""
+
+	for lineNo, rawLine := range strings.Split(content, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, ";") {
+			continue
+		}
+
+		lower := strings.ToLower(line)
+		if strings.HasSuffix(lower, "=begin") {
+			provider := strings.TrimSpace(strings.TrimSuffix(lower, "=begin"))
+			if provider != "cloudflare" && provider != "dns" {
+				return fmt.Errorf("dns.conf line %d: unsupported block %q (only cloudflare and dns allowed)", lineNo+1, provider)
+			}
+			currentProvider = provider
+			currentName = ""
+			continue
+		}
+		if strings.HasSuffix(lower, "=end") {
+			endProvider := strings.TrimSpace(strings.TrimSuffix(lower, "=end"))
+			if currentProvider != endProvider {
+				return fmt.Errorf("dns.conf line %d: mismatched end block %q", lineNo+1, endProvider)
+			}
+			currentProvider = ""
+			currentName = ""
+			continue
+		}
+
+		if currentProvider == "" {
+			continue // skip lines outside blocks
+		}
+
+		if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+			currentName = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+			if currentName == "" {
+				return fmt.Errorf("dns.conf line %d: empty section name", lineNo+1)
+			}
+			if _, ok := sections[currentProvider][currentName]; !ok {
+				sections[currentProvider][currentName] = map[string]string{}
+			}
+			continue
+		}
+
+		if currentName == "" {
+			return fmt.Errorf("dns.conf line %d: setting before section", lineNo+1)
+		}
+
+		key, value, ok := strings.Cut(line, "=")
+		if !ok {
+			return fmt.Errorf("dns.conf line %d: invalid setting", lineNo+1)
+		}
+		sections[currentProvider][currentName][strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"`)
+	}
+
+	// Replace cloudflare from dns.conf
+	if len(sections["cloudflare"]) > 0 {
+		cfg.Cloudflare = nil
+		for _, name := range sortedSectionNames(sections["cloudflare"]) {
+			values := sections["cloudflare"][name]
+			cfg.Cloudflare = append(cfg.Cloudflare, CloudflareConfig{
+				Name:     name,
+				Remark:   values["remark"],
+				APIToken: values["api_token"],
+				ZoneID:   values["zone_id"],
+			})
+		}
+	}
+
+	// Replace dns bindings from dns.conf
+	if len(sections["dns"]) > 0 {
+		cfg.DNSBindings = nil
+		for _, name := range sortedSectionNames(sections["dns"]) {
+			values := sections["dns"][name]
+			ttl := intValueOrDefault(values["ttl"], 1)
+			cfg.DNSBindings = append(cfg.DNSBindings, DNSBinding{
+				Name:       name,
+				Cloudflare: valueOrDefault(values["cloudflare"], values["cf"]),
+				Provider:   strings.ToLower(values["provider"]),
+				Account:    values["account"],
+				VM:         valueOrDefault(values["vm"], valueOrDefault(values["vm_id"], values["instance"])),
+				Domain:     values["domain"],
+				Type:       valueOrDefault(strings.ToUpper(values["type"]), "A"),
+				TTL:        ttl,
+				Proxied:    boolValue(values["proxied"]),
+			})
+		}
+	}
+
+	return nil
 }
 
 func (cfg *Config) normalize() {
@@ -254,6 +385,7 @@ func parseBlockConfig(content string) (*Config, error) {
 		values := sections["cloudflare"][name]
 		cfg.Cloudflare = append(cfg.Cloudflare, CloudflareConfig{
 			Name:     name,
+			Remark:   values["remark"],
 			APIToken: values["api_token"],
 			ZoneID:   values["zone_id"],
 		})
