@@ -273,11 +273,38 @@ button {
   align-self: start;
   position: sticky;
   top: 104px;
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
 }
 
 .sidebar nav {
   display: grid;
   gap: 8px;
+}
+
+.sidebar-footer {
+  padding-top: 16px;
+  border-top: 1px solid var(--panel-border);
+}
+
+.repo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  text-decoration: none;
+  font-size: 13px;
+  font-weight: 500;
+  transition: var(--transition);
+}
+
+.repo-link:hover {
+  color: var(--text);
+}
+
+.repo-link i {
+  font-size: 16px;
 }
 
 .nav-item {

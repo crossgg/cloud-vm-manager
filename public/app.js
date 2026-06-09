@@ -41,7 +41,8 @@ function cacheElements() {
     updateProxyMode: document.getElementById('update-proxy-mode'),
     updateCustomProxy: document.getElementById('update-custom-proxy'),
     updateCustomProxyField: document.getElementById('update-custom-proxy-field'),
-    updateMessage: document.getElementById('update-message')
+    updateMessage: document.getElementById('update-message'),
+    saveUpdateProxyBtn: document.getElementById('save-update-proxy-btn')
   });
 }
 
@@ -71,8 +72,9 @@ function bindActions() {
   document.getElementById('refresh-current-btn').addEventListener('click', refreshVMs);
   document.getElementById('clear-log-btn').addEventListener('click', clearLogs);
   document.getElementById('reload-config-btn').addEventListener('click', reloadConfig);
-  document.getElementById('check-update-btn')?.addEventListener('click', loadUpdateStatus);
+  document.getElementById('check-update-btn')?.addEventListener('click', () => loadUpdateStatus(true));
   document.getElementById('apply-update-btn')?.addEventListener('click', applyUpdate);
+  els.saveUpdateProxyBtn?.addEventListener('click', saveUpdateProxy);
   els.updateProxyMode?.addEventListener('change', updateProxyModeChanged);
   els.authForm.addEventListener('submit', saveAuthSettings);
 
@@ -475,23 +477,44 @@ async function loadConfigStatus() {
   }
 }
 
-async function loadUpdateStatus() {
+async function loadUpdateStatus(isManual = false) {
   if (!els.updateMessage) return;
-  els.updateMessage.textContent = '正在检查更新...';
-  els.updateMessage.className = 'form-message';
+  if (isManual) {
+    els.updateMessage.textContent = '正在检查更新...';
+    els.updateMessage.className = 'form-message';
+  } else {
+    els.updateMessage.textContent = '';
+    els.updateMessage.className = 'form-message';
+  }
   try {
     const proxy = selectedUpdateProxy();
-    const query = proxy ? `?download_proxy=${encodeURIComponent(proxy)}` : '';
+    const queryParts = [];
+    if (isManual) {
+      queryParts.push('check=true');
+    }
+    if (proxy) {
+      queryParts.push(`download_proxy=${encodeURIComponent(proxy)}`);
+    }
+    const query = queryParts.length ? `?${queryParts.join('&')}` : '';
     const data = await fetchJSON(`/api/update/status${query}`);
     els.updateCurrentVersion.textContent = data.currentVersion || '-';
-    els.updateLatestVersion.textContent = data.latestVersion || '-';
-    els.updateAssetName.textContent = data.assetName || '-';
     applyDefaultUpdateProxy(data.downloadProxy || '');
-    els.updateMessage.textContent = data.updateAvailable ? '发现可用更新。' : '当前已是最新版本。';
-    els.updateMessage.className = `form-message ${data.updateAvailable ? 'success' : ''}`;
+    if (isManual) {
+      els.updateLatestVersion.textContent = data.latestVersion || '-';
+      els.updateAssetName.textContent = data.assetName || '-';
+      if (data.checkError) {
+        els.updateMessage.textContent = `检查失败：${data.checkError}`;
+        els.updateMessage.className = 'form-message error';
+      } else {
+        els.updateMessage.textContent = data.updateAvailable ? '发现可用更新。' : '当前已是最新版本。';
+        els.updateMessage.className = `form-message ${data.updateAvailable ? 'success' : ''}`;
+      }
+    }
   } catch (error) {
-    els.updateMessage.textContent = `检查失败：${error.message}`;
-    els.updateMessage.className = 'form-message error';
+    if (isManual) {
+      els.updateMessage.textContent = `检查失败：${error.message}`;
+      els.updateMessage.className = 'form-message error';
+    }
   }
 }
 
@@ -514,11 +537,32 @@ async function applyUpdate() {
   }
 }
 
+async function saveUpdateProxy() {
+  if (!els.updateMessage) return;
+  els.updateMessage.textContent = '正在保存加速源...';
+  els.updateMessage.className = 'form-message';
+  try {
+    const proxy = selectedUpdateProxy();
+    const data = await fetchJSON('/api/settings/update', {
+      method: 'POST',
+      body: { downloadProxy: proxy }
+    });
+    els.updateMessage.textContent = data.message || '加速源配置已保存。';
+    els.updateMessage.className = 'form-message success';
+    addLog('加速源配置已保存并重载。', 'success');
+  } catch (error) {
+    els.updateMessage.textContent = `保存失败：${error.message}`;
+    els.updateMessage.className = 'form-message error';
+  }
+}
+
 function applyDefaultUpdateProxy(proxy) {
   if (!els.updateProxyMode || els.updateProxyMode.dataset.initialized === 'true') return;
   if (proxy === 'https://gh-proxy.com/' || proxy === 'https://gh-proxy.com') {
     els.updateProxyMode.value = 'https://gh-proxy.com/';
-  } else if (proxy) {
+  } else if (proxy === '') {
+    els.updateProxyMode.value = '';
+  } else {
     els.updateProxyMode.value = 'custom';
     els.updateCustomProxy.value = proxy;
   }

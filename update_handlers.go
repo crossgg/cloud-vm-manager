@@ -48,24 +48,29 @@ type updateInfo struct {
 	RuntimePath     string `json:"runtimePath"`
 	ReleaseURL      string `json:"releaseUrl,omitempty"`
 	DownloadProxy   string `json:"downloadProxy,omitempty"`
+	CheckError      string `json:"checkError,omitempty"`
 }
 
 func getUpdateStatus(c *gin.Context) {
-	release, asset, err := latestReleaseAsset(c.Query("download_proxy"))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	info := updateInfo{
+		CurrentVersion:  version,
+		RuntimePath:     runtimeBinPath,
+		DownloadProxy:   defaultDownloadProxy(),
 	}
 
-	c.JSON(http.StatusOK, updateInfo{
-		CurrentVersion:  version,
-		LatestVersion:   release.TagName,
-		UpdateAvailable: version == "dev" || release.TagName != version,
-		AssetName:       asset.Name,
-		RuntimePath:     runtimeBinPath,
-		ReleaseURL:      release.HTMLURL,
-		DownloadProxy:   defaultDownloadProxy(),
-	})
+	if c.Query("check") == "true" {
+		release, asset, err := latestReleaseAsset(c.Query("download_proxy"))
+		if err != nil {
+			info.CheckError = err.Error()
+		} else {
+			info.LatestVersion = release.TagName
+			info.UpdateAvailable = version == "dev" || release.TagName != version
+			info.AssetName = asset.Name
+			info.ReleaseURL = release.HTMLURL
+		}
+	}
+
+	c.JSON(http.StatusOK, info)
 }
 
 func applyUpdate(c *gin.Context) {
@@ -131,6 +136,14 @@ func fetchLatestRelease(downloadProxy string) (githubRelease, error) {
 	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "cloud-vm-manager-updater")
+
+	token := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_TOKEN"))
+	if token == "" {
+		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer " + token)
+	}
 
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
@@ -273,6 +286,12 @@ func verifyReleaseChecksum(release githubRelease, assetName, archivePath string,
 }
 
 func defaultDownloadProxy() string {
+	runtimeState.mu.RLock()
+	cfg := runtimeState.cfg
+	runtimeState.mu.RUnlock()
+	if cfg != nil && cfg.Update.DownloadProxy != "" {
+		return cfg.Update.DownloadProxy
+	}
 	return strings.TrimSpace(os.Getenv("UPDATE_DOWNLOAD_PROXY"))
 }
 
