@@ -4,9 +4,21 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>多云 VM 管理面板</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
   <link rel="stylesheet" href="/public/style.css">
 </head>
 <body>
+  <script>
+    (function() {
+      const theme = localStorage.getItem('theme') || 'dark';
+      if (theme === 'light') {
+        document.body.classList.add('light-theme');
+      }
+    })();
+  </script>
   <div id="app-shell" class="shell app-shell locked">
     <header class="topbar">
       <div class="brand">
@@ -17,6 +29,9 @@
         </div>
       </div>
       <div class="topbar-actions">
+        <button id="theme-toggle" class="ghost-btn" type="button" title="切换主题" style="min-height: 34px; padding: 0 10px;">
+          <i id="theme-icon" class="bi bi-moon-stars"></i>
+        </button>
         <span id="auth-badge" class="auth-badge">检查认证中</span>
         <button id="logout-btn" class="ghost-btn" type="button" hidden>退出</button>
       </div>
@@ -25,10 +40,22 @@
     <div class="layout">
       <aside class="sidebar">
         <nav>
-          <a href="#" class="nav-item active" data-section="overview">概览</a>
-          <a href="#" class="nav-item" data-section="instances">实例管理</a>
-          <a href="#" class="nav-item" data-section="dns">DNS 管理</a>
-          <a href="#" class="nav-item" data-section="settings">管理</a>
+          <a href="#" class="nav-item active" data-section="overview">
+            <i class="bi bi-grid-1x2"></i>
+            <span>概览</span>
+          </a>
+          <a href="#" class="nav-item" data-section="instances">
+            <i class="bi bi-cpu"></i>
+            <span>实例管理</span>
+          </a>
+          <a href="#" class="nav-item" data-section="dns">
+            <i class="bi bi-globe"></i>
+            <span>DNS 管理</span>
+          </a>
+          <a href="#" class="nav-item" data-section="settings">
+            <i class="bi bi-sliders"></i>
+            <span>系统设置</span>
+          </a>
         </nav>
       </aside>
 
@@ -315,5 +342,31 @@
   </div>
 
   <script src="/public/app.js"></script>
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const toggleBtn = document.getElementById('theme-toggle');
+      const icon = document.getElementById('theme-icon');
+      
+      const updateIcon = (isLight) => {
+        if (!icon) return;
+        if (isLight) {
+          icon.className = 'bi bi-sun';
+        } else {
+          icon.className = 'bi bi-moon-stars';
+        }
+      };
+
+      const isLight = document.body.classList.contains('light-theme');
+      updateIcon(isLight);
+
+      if (toggleBtn) {
+        toggleBtn.addEventListener('click', () => {
+          const currentlyLight = document.body.classList.toggle('light-theme');
+          localStorage.setItem('theme', currentlyLight ? 'light' : 'dark');
+          updateIcon(currentlyLight);
+        });
+      }
+    });
+  </script>
 </body>
 </html>

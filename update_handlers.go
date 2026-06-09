@@ -120,7 +120,11 @@ func fetchLatestRelease(downloadProxy string) (githubRelease, error) {
 	if repo == "" {
 		repo = defaultUpdateRepo
 	}
-	endpoint := proxiedDownloadURL(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo), downloadProxy)
+	apiProxy := strings.TrimSpace(downloadProxy)
+	if apiProxy == "https://gh-proxy.com/" || apiProxy == "https://gh-proxy.com" || apiProxy == defaultDownloadProxy() {
+		apiProxy = ""
+	}
+	endpoint := proxiedDownloadURL(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo), apiProxy)
 	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
 	if err != nil {
 		return githubRelease{}, err
