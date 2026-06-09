@@ -639,7 +639,7 @@ button {
 
 .vm-actions {
   display: grid;
-  grid-template-columns: repeat(5, minmax(72px, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -665,6 +665,14 @@ button {
 
 .action-btn.dns {
   background: var(--ink);
+}
+
+.action-btn.security-list {
+  background: #0f766e;
+}
+
+.action-btn.security-list:hover {
+  background: #0d5f59;
 }
 
 .action-btn:disabled {
@@ -812,6 +820,12 @@ button {
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.16);
 }
 
+.field input:disabled {
+  background: #e5e7eb;
+  color: #94a3b8;
+  cursor: not-allowed;
+}
+
 .login-error {
   min-height: 20px;
   margin-top: 12px;
@@ -892,6 +906,154 @@ button {
 
 .action-btn.dns-bind:hover {
   background: #6d28d9;
+}
+
+.sg-modal-panel {
+  width: min(1120px, 100%);
+}
+
+.sg-toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  justify-content: space-between;
+  padding: 14px 20px 0;
+}
+
+.sg-toolbar .field {
+  max-width: 420px;
+}
+
+.sg-resource-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.sg-resource-tab {
+  padding: 8px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.sg-resource-tab.active {
+  background: var(--blue);
+  color: white;
+}
+
+.sg-create-row {
+  display: grid;
+  grid-template-columns: minmax(220px, 1fr) auto;
+  gap: 10px;
+  align-items: end;
+  padding: 12px 20px 0;
+}
+
+.sg-direction-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.sg-direction-tab {
+  padding: 8px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.sg-direction-tab.active {
+  background: var(--ink);
+  color: white;
+}
+
+.sg-rule-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.22fr) minmax(0, 1fr);
+  gap: 12px 16px;
+  align-items: stretch;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+}
+
+.sg-rule-meta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sg-rule-meta strong {
+  font-size: 13px;
+}
+
+.sg-rule-meta span {
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.sg-rule-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  gap: 10px;
+  align-items: end;
+  min-width: 0;
+}
+
+.sg-description-field {
+  grid-column: span 2;
+}
+
+.sg-allow-summary {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  flex: 1;
+  min-height: 34px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+}
+
+.sg-allow-summary span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.sg-allow-summary strong {
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.sg-rule-footer {
+  grid-column: 2;
+  display: flex;
+  gap: 10px;
+  align-items: stretch;
+  min-width: 0;
+}
+
+.sg-rule-delete-btn {
+  flex: 0 0 auto;
+  min-width: 64px;
+  align-self: stretch;
 }
 
 /* DNS Modal */
@@ -988,6 +1150,7 @@ button {
 .field.compact select {
   height: 34px;
   font-size: 13px;
+  min-width: 0;
 }
 
 .switch-row.compact {
@@ -1130,5 +1293,48 @@ button {
 @media (max-width: 900px) {
   .dns-management-grid {
     grid-template-columns: 1fr;
+  }
+
+  .sg-rule-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sg-rule-footer {
+    grid-column: 1;
+  }
+
+  .sg-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .sg-create-row {
+    grid-template-columns: 1fr;
+  }
+
+  .sg-rule-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .sg-rule-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .sg-description-field {
+    grid-column: auto;
+  }
+
+  .sg-allow-summary {
+    grid-column: auto;
+  }
+
+  .sg-rule-footer {
+    flex-direction: column;
+  }
+
+  .sg-rule-delete-btn {
+    width: 100%;
   }
 }

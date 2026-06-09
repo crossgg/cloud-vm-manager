@@ -29,6 +29,8 @@ func main() {
 
 	r.GET("/api/config/status", getConfigStatus)
 	r.POST("/api/config/reload", reloadConfig)
+	r.GET("/api/update/status", getUpdateStatus)
+	r.POST("/api/update/apply", applyUpdate)
 	r.GET("/api/settings/auth", getAuthSettings)
 	r.POST("/api/settings/auth", updateAuthSettings)
 	r.GET("/api/accounts", listAccounts)
@@ -41,6 +43,11 @@ func main() {
 	r.POST("/api/vm/:provider/:account/:name/change-ip", changeIP)
 	r.POST("/api/vm/:provider/:account/:name/update-dns", updateDNS)
 	r.GET("/api/refresh/:provider/:account/:name", refreshVM)
+	r.GET("/api/vm/:provider/:account/:name/security-lists", listOCISecurityLists)
+	r.POST("/api/vm/:provider/:account/:name/security-lists/:listID/rules", saveOCISecurityListRules)
+	r.GET("/api/vm/:provider/:account/:name/network-security-groups", listOCINetworkSecurityGroups)
+	r.POST("/api/vm/:provider/:account/:name/network-security-groups", createOCINetworkSecurityGroup)
+	r.POST("/api/vm/:provider/:account/:name/network-security-groups/:groupID/rules", saveOCINetworkSecurityGroupRules)
 
 	// DNS management APIs
 	r.GET("/api/dns/cloudflare", listCloudflareAccounts)

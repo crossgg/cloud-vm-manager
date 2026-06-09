@@ -1,0 +1,361 @@
+package main
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"time"
+
+	"github.com/gin-gonic/gin"
+)
+
+var version = "dev"
+
+const (
+	defaultUpdateRepo = "crossgg/cloud-vm-manager"
+	runtimeBinPath    = "/app/runtime/cloud-vm-manager"
+	updateTempDir     = "/app/runtime/update"
+)
+
+type githubRelease struct {
+	TagName string               `json:"tag_name"`
+	Name    string               `json:"name"`
+	HTMLURL string               `json:"html_url"`
+	Assets  []githubReleaseAsset `json:"assets"`
+}
+
+type githubReleaseAsset struct {
+	Name               string `json:"name"`
+	BrowserDownloadURL string `json:"browser_download_url"`
+	Size               int64  `json:"size"`
+}
+
+type updateInfo struct {
+	CurrentVersion  string `json:"currentVersion"`
+	LatestVersion   string `json:"latestVersion"`
+	UpdateAvailable bool   `json:"updateAvailable"`
+	AssetName       string `json:"assetName,omitempty"`
+	RuntimePath     string `json:"runtimePath"`
+	ReleaseURL      string `json:"releaseUrl,omitempty"`
+	DownloadProxy   string `json:"downloadProxy,omitempty"`
+}
+
+func getUpdateStatus(c *gin.Context) {
+	release, asset, err := latestReleaseAsset(c.Query("download_proxy"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, updateInfo{
+		CurrentVersion:  version,
+		LatestVersion:   release.TagName,
+		UpdateAvailable: version == "dev" || release.TagName != version,
+		AssetName:       asset.Name,
+		RuntimePath:     runtimeBinPath,
+		ReleaseURL:      release.HTMLURL,
+		DownloadProxy:   defaultDownloadProxy(),
+	})
+}
+
+func applyUpdate(c *gin.Context) {
+	var payload struct {
+		DownloadProxy string `json:"downloadProxy"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil && err != io.EOF {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	release, asset, err := latestReleaseAsset(payload.DownloadProxy)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := installReleaseAsset(release, asset, payload.DownloadProxy); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success":       true,
+		"message":       "update installed; restarting process",
+		"latestVersion": release.TagName,
+		"assetName":     asset.Name,
+	})
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+	}()
+}
+
+func latestReleaseAsset(downloadProxy string) (githubRelease, githubReleaseAsset, error) {
+	release, err := fetchLatestRelease(downloadProxy)
+	if err != nil {
+		return githubRelease{}, githubReleaseAsset{}, err
+	}
+	assetName := updateAssetName(runtime.GOOS, runtime.GOARCH, os.Getenv("GOARM"))
+	for _, asset := range release.Assets {
+		if asset.Name == assetName {
+			return release, asset, nil
+		}
+	}
+	return githubRelease{}, githubReleaseAsset{}, fmt.Errorf("release %s has no asset %s", release.TagName, assetName)
+}
+
+func fetchLatestRelease(downloadProxy string) (githubRelease, error) {
+	repo := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_REPO"))
+	if repo == "" {
+		repo = defaultUpdateRepo
+	}
+	endpoint := proxiedDownloadURL(fmt.Sprintf("https://api.github.com/repos/%s/releases/latest", repo), downloadProxy)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return githubRelease{}, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("User-Agent", "cloud-vm-manager-updater")
+
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		return githubRelease{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return githubRelease{}, fmt.Errorf("GitHub release API returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	var release githubRelease
+	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		return githubRelease{}, err
+	}
+	return release, nil
+}
+
+func updateAssetName(goos, goarch, goarm string) string {
+	switch {
+	case goos == "windows" && goarch == "amd64":
+		return "cloud-vm-manager_windows_amd64.zip"
+	case goos == "linux" && goarch == "amd64":
+		return "cloud-vm-manager_linux_amd64.tar.gz"
+	case goos == "linux" && goarch == "arm64":
+		return "cloud-vm-manager_linux_arm64.tar.gz"
+	case goos == "linux" && goarch == "arm":
+		return "cloud-vm-manager_linux_armv7.tar.gz"
+	default:
+		return fmt.Sprintf("cloud-vm-manager_%s_%s.tar.gz", goos, goarch)
+	}
+}
+
+func installReleaseAsset(release githubRelease, asset githubReleaseAsset, downloadProxy string) error {
+	if asset.BrowserDownloadURL == "" {
+		return fmt.Errorf("release asset %s has no download URL", asset.Name)
+	}
+	if err := os.MkdirAll(updateTempDir, 0o755); err != nil {
+		return err
+	}
+	archivePath := filepath.Join(updateTempDir, asset.Name)
+	if err := downloadFile(proxiedDownloadURL(asset.BrowserDownloadURL, downloadProxy), archivePath); err != nil {
+		return err
+	}
+	if err := verifyReleaseChecksum(release, asset.Name, archivePath, downloadProxy); err != nil {
+		return err
+	}
+
+	extractedPath := filepath.Join(updateTempDir, "cloud-vm-manager")
+	_ = os.Remove(extractedPath)
+	if strings.HasSuffix(asset.Name, ".zip") {
+		if err := extractBinaryFromZip(archivePath, extractedPath); err != nil {
+			return err
+		}
+	} else {
+		if err := extractBinaryFromTarGz(archivePath, extractedPath); err != nil {
+			return err
+		}
+	}
+	if err := os.Chmod(extractedPath, 0o755); err != nil {
+		return err
+	}
+	if err := os.Rename(extractedPath, runtimeBinPath); err != nil {
+		return err
+	}
+	return nil
+}
+
+func downloadFile(url, dest string) error {
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return err
+	}
+	req.Header.Set("User-Agent", "cloud-vm-manager-updater")
+	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("download returned %d: %s", resp.StatusCode, string(body))
+	}
+
+	tmp := dest + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, resp.Body); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dest)
+}
+
+func verifyReleaseChecksum(release githubRelease, assetName, archivePath string, downloadProxy string) error {
+	var checksumAsset *githubReleaseAsset
+	for i := range release.Assets {
+		if release.Assets[i].Name == "checksums.txt" {
+			checksumAsset = &release.Assets[i]
+			break
+		}
+	}
+	if checksumAsset == nil {
+		return fmt.Errorf("release %s has no checksums.txt", release.TagName)
+	}
+
+	checksumPath := filepath.Join(updateTempDir, "checksums.txt")
+	if err := downloadFile(proxiedDownloadURL(checksumAsset.BrowserDownloadURL, downloadProxy), checksumPath); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(checksumPath)
+	if err != nil {
+		return err
+	}
+	expected := ""
+	for _, line := range strings.Split(string(data), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 2 && fields[1] == assetName {
+			expected = fields[0]
+			break
+		}
+	}
+	if expected == "" {
+		return fmt.Errorf("checksums.txt does not contain %s", assetName)
+	}
+
+	actual, err := fileSHA256(archivePath)
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(actual, expected) {
+		return fmt.Errorf("checksum mismatch for %s", assetName)
+	}
+	return nil
+}
+
+func defaultDownloadProxy() string {
+	return strings.TrimSpace(os.Getenv("UPDATE_DOWNLOAD_PROXY"))
+}
+
+func proxiedDownloadURL(rawURL, proxy string) string {
+	proxy = strings.TrimSpace(proxy)
+	if proxy == "" {
+		return rawURL
+	}
+	if !strings.HasSuffix(proxy, "/") {
+		proxy += "/"
+	}
+	return proxy + rawURL
+}
+
+func fileSHA256(path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	hash := sha256.New()
+	if _, err := io.Copy(hash, f); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(hash.Sum(nil)), nil
+}
+
+func extractBinaryFromZip(path, dest string) error {
+	reader, err := zip.OpenReader(path)
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
+	for _, file := range reader.File {
+		if filepath.Base(file.Name) != "cloud-vm-manager" && filepath.Base(file.Name) != "cloud-vm-manager.exe" {
+			continue
+		}
+		rc, err := file.Open()
+		if err != nil {
+			return err
+		}
+		defer rc.Close()
+		return writeFileFromReader(dest, rc)
+	}
+	return fmt.Errorf("archive does not contain cloud-vm-manager binary")
+}
+
+func extractBinaryFromTarGz(path, dest string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+	tr := tar.NewReader(gz)
+	for {
+		header, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "cloud-vm-manager" {
+			continue
+		}
+		return writeFileFromReader(dest, tr)
+	}
+	return fmt.Errorf("archive does not contain cloud-vm-manager binary")
+}
+
+func writeFileFromReader(dest string, reader io.Reader) error {
+	tmp := dest + ".tmp"
+	out, err := os.Create(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, reader); err != nil {
+		_ = out.Close()
+		return err
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp, dest)
+}

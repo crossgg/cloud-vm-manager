@@ -8,4 +8,5 @@ services:
       - "3000:3000"
     volumes:
       - ./config:/app/config
+      - ./runtime:/app/runtime
     restart: unless-stopped
