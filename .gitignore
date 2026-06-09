@@ -8,3 +8,13 @@ keys
 *.pem
 *.log
 .DS_Store
+cloud-vm-manager
+cloud-vm-manager.exe
+bin/
+dist/
+release/
+runtime/
+*.test
+*.out
+coverage.*
+tmp/

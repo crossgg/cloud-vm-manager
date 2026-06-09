@@ -136,6 +136,7 @@ docker run -d \
   --name cloud-vm-manager \
   -p 3000:3000 \
   -v $(pwd)/config:/app/config \
+  -v $(pwd)/runtime:/app/runtime \
   --restart unless-stopped \
   cloud-vm-manager:local
 ```
@@ -149,6 +150,7 @@ docker run -d \
   --name cloud-vm-manager \
   -p 3000:3000 \
   -v $(pwd)/config:/app/config \
+  -v $(pwd)/runtime:/app/runtime \  
   --restart unless-stopped \
   ghcr.io/crossgg/cloud-vm-manager:latest
 ```
@@ -166,6 +168,7 @@ docker compose up -d
 ```yaml
 volumes:
   - ./config:/app/config
+  - ./runtime:/app/runtime
 ```
 
 ## DNS 管理

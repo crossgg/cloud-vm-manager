@@ -34,7 +34,14 @@ function cacheElements() {
     authCookieSecure: document.getElementById('auth-cookie-secure'),
     authMessage: document.getElementById('auth-settings-message'),
     configPath: document.getElementById('config-path'),
-    configStatus: document.getElementById('config-status')
+    configStatus: document.getElementById('config-status'),
+    updateCurrentVersion: document.getElementById('update-current-version'),
+    updateLatestVersion: document.getElementById('update-latest-version'),
+    updateAssetName: document.getElementById('update-asset-name'),
+    updateProxyMode: document.getElementById('update-proxy-mode'),
+    updateCustomProxy: document.getElementById('update-custom-proxy'),
+    updateCustomProxyField: document.getElementById('update-custom-proxy-field'),
+    updateMessage: document.getElementById('update-message')
   });
 }
 
@@ -50,6 +57,7 @@ function bindNavigation() {
       if (section === 'settings') {
         loadAuthSettings();
         loadConfigStatus();
+        loadUpdateStatus();
       }
       if (section === 'dns') {
         loadDNSPage();
@@ -63,6 +71,9 @@ function bindActions() {
   document.getElementById('refresh-current-btn').addEventListener('click', refreshVMs);
   document.getElementById('clear-log-btn').addEventListener('click', clearLogs);
   document.getElementById('reload-config-btn').addEventListener('click', reloadConfig);
+  document.getElementById('check-update-btn')?.addEventListener('click', loadUpdateStatus);
+  document.getElementById('apply-update-btn')?.addEventListener('click', applyUpdate);
+  els.updateProxyMode?.addEventListener('change', updateProxyModeChanged);
   els.authForm.addEventListener('submit', saveAuthSettings);
 
   document.addEventListener('click', event => {
@@ -100,6 +111,7 @@ async function checkAuth() {
     addLog('已读取本地配置，点击账号可加载机器。', 'info');
     fetchAccounts();
     loadConfigStatus();
+    loadUpdateStatus();
   } catch (error) {
     window.location.replace('/login');
   }
@@ -307,6 +319,7 @@ function renderVMCard(vm) {
         <button class="action-btn change-ip" type="button" data-action="change-ip">换 IP</button>
         ${dnsEnabled ? '<button class="action-btn dns" type="button" data-action="update-dns">更新 DNS</button>' : ''}
         <button class="action-btn dns-bind" type="button" data-action="dns-bind">DNS 绑定</button>
+        ${provider === 'oci' ? '<button class="action-btn security-list" type="button" data-action="security-list">安全规则</button>' : ''}
       </div>
     </article>
   `;
@@ -332,6 +345,10 @@ async function handleVMAction(button) {
 
   if (action === 'dns-bind') {
     openDNSBindingModal(vm);
+    return;
+  }
+  if (action === 'security-list') {
+    openSecurityListModal(vm);
     return;
   }
   if (action === 'start' && vm.status === 'VM running') {
@@ -456,6 +473,70 @@ async function loadConfigStatus() {
   } catch (error) {
     els.configStatus.textContent = `读取失败：${error.message}`;
   }
+}
+
+async function loadUpdateStatus() {
+  if (!els.updateMessage) return;
+  els.updateMessage.textContent = '正在检查更新...';
+  els.updateMessage.className = 'form-message';
+  try {
+    const proxy = selectedUpdateProxy();
+    const query = proxy ? `?download_proxy=${encodeURIComponent(proxy)}` : '';
+    const data = await fetchJSON(`/api/update/status${query}`);
+    els.updateCurrentVersion.textContent = data.currentVersion || '-';
+    els.updateLatestVersion.textContent = data.latestVersion || '-';
+    els.updateAssetName.textContent = data.assetName || '-';
+    applyDefaultUpdateProxy(data.downloadProxy || '');
+    els.updateMessage.textContent = data.updateAvailable ? '发现可用更新。' : '当前已是最新版本。';
+    els.updateMessage.className = `form-message ${data.updateAvailable ? 'success' : ''}`;
+  } catch (error) {
+    els.updateMessage.textContent = `检查失败：${error.message}`;
+    els.updateMessage.className = 'form-message error';
+  }
+}
+
+async function applyUpdate() {
+  if (!els.updateMessage) return;
+  if (!confirm('确认下载更新并重启程序？')) return;
+  els.updateMessage.textContent = '正在下载并安装更新...';
+  els.updateMessage.className = 'form-message';
+  try {
+    const data = await fetchJSON('/api/update/apply', {
+      method: 'POST',
+      body: { downloadProxy: selectedUpdateProxy() }
+    });
+    els.updateMessage.textContent = `已安装 ${data.latestVersion || ''}，程序正在重启...`;
+    els.updateMessage.className = 'form-message success';
+    addLog('程序更新已安装，等待容器自动重启。', 'success');
+  } catch (error) {
+    els.updateMessage.textContent = `更新失败：${error.message}`;
+    els.updateMessage.className = 'form-message error';
+  }
+}
+
+function applyDefaultUpdateProxy(proxy) {
+  if (!els.updateProxyMode || els.updateProxyMode.dataset.initialized === 'true') return;
+  if (proxy === 'https://gh-proxy.com/' || proxy === 'https://gh-proxy.com') {
+    els.updateProxyMode.value = 'https://gh-proxy.com/';
+  } else if (proxy) {
+    els.updateProxyMode.value = 'custom';
+    els.updateCustomProxy.value = proxy;
+  }
+  els.updateProxyMode.dataset.initialized = 'true';
+  updateProxyModeChanged();
+}
+
+function updateProxyModeChanged() {
+  if (!els.updateCustomProxyField || !els.updateProxyMode) return;
+  els.updateCustomProxyField.hidden = els.updateProxyMode.value !== 'custom';
+}
+
+function selectedUpdateProxy() {
+  if (!els.updateProxyMode) return '';
+  if (els.updateProxyMode.value === 'custom') {
+    return els.updateCustomProxy?.value?.trim() || '';
+  }
+  return els.updateProxyMode.value;
 }
 
 function showFormMessage(message, isError) {
@@ -865,5 +946,532 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('dns-modal-body')?.addEventListener('click', e => {
     const btn = e.target.closest('.dns-remove-btn');
     if (btn) removeDNSBindingRow(btn.dataset.index);
+  });
+});
+
+let securityListModalVM = null;
+let securityListModalLists = [];
+let securityListModalNSGs = [];
+let securityListModalDirection = 'ingress';
+let securityListModalResourceType = 'security-list';
+
+const SECURITY_PROTOCOL_OPTIONS = [
+  { value: 'all', label: '所有协议' },
+  { value: '1', label: 'ICMP' },
+  { value: '6', label: 'TCP' },
+  { value: '17', label: 'UDP' },
+  { value: '6', label: 'SSH (TCP/22)', minPort: 22, maxPort: 22 },
+  { value: '6', label: 'HTTP (TCP/80)', minPort: 80, maxPort: 80 },
+  { value: '6', label: 'HTTPS (TCP/443)', minPort: 443, maxPort: 443 },
+  { value: '6', label: 'RDP (TCP/3389)', minPort: 3389, maxPort: 3389 },
+  { value: '50', label: 'ESP (50)' },
+  { value: '51', label: 'AH (51)' },
+  { value: '58', label: 'IPv6 ICMP (58)' },
+  { value: '47', label: 'GRE (47)' },
+  { value: '132', label: 'SCTP (132)' },
+  { value: '4', label: 'IPv4 (4)' },
+  { value: '41', label: 'IPv6 (41)' }
+];
+
+const ICMP_TYPE_OPTIONS = [
+  { value: '', label: '全部' },
+  { value: '0', label: '0 - Echo Reply' },
+  { value: '3', label: '3 - Destination Unreachable' },
+  { value: '4', label: '4 - Source Quench' },
+  { value: '5', label: '5 - Redirect' },
+  { value: '8', label: '8 - Echo Request (Ping)' },
+  { value: '9', label: '9 - Router Advertisement' },
+  { value: '10', label: '10 - Router Solicitation' },
+  { value: '11', label: '11 - Time Exceeded' },
+  { value: '12', label: '12 - Parameter Problem' },
+  { value: '13', label: '13 - Timestamp' },
+  { value: '14', label: '14 - Timestamp Reply' }
+];
+
+const ICMP_CODE_OPTIONS = {
+  '': [{ value: '', label: '全部' }],
+  '0': [{ value: '', label: '全部' }, { value: '0', label: '0 - Echo Reply' }],
+  '3': [
+    { value: '', label: '全部' },
+    { value: '0', label: '0 - Network Unreachable' },
+    { value: '1', label: '1 - Host Unreachable' },
+    { value: '2', label: '2 - Protocol Unreachable' },
+    { value: '3', label: '3 - Port Unreachable' },
+    { value: '4', label: '4 - Fragmentation Needed' },
+    { value: '13', label: '13 - Communication Administratively Prohibited' }
+  ],
+  '5': [
+    { value: '', label: '全部' },
+    { value: '0', label: '0 - Redirect Datagram for Network' },
+    { value: '1', label: '1 - Redirect Datagram for Host' }
+  ],
+  '8': [{ value: '', label: '全部' }, { value: '0', label: '0 - Echo Request' }],
+  '11': [
+    { value: '', label: '全部' },
+    { value: '0', label: '0 - TTL Exceeded' },
+    { value: '1', label: '1 - Fragment Reassembly Time Exceeded' }
+  ],
+  '12': [
+    { value: '', label: '全部' },
+    { value: '0', label: '0 - Pointer Indicates Error' },
+    { value: '1', label: '1 - Missing Required Option' },
+    { value: '2', label: '2 - Bad Length' }
+  ]
+};
+
+function openSecurityListModal(vm) {
+  securityListModalVM = vm;
+  securityListModalResourceType = 'security-list';
+  securityListModalDirection = 'ingress';
+  const modal = document.getElementById('security-list-modal');
+  document.getElementById('sg-modal-title').textContent = `OCI 安全规则 - ${vm.accountId}/${vm.name}`;
+  document.getElementById('sg-modal-list').innerHTML = '';
+  document.getElementById('sg-modal-body').innerHTML = '<div class="empty-state compact">加载中...</div>';
+  document.getElementById('sg-modal-message').textContent = '';
+  document.getElementById('sg-new-nsg-name').value = '';
+  updateSecurityResourceTabs();
+  updateSecurityRuleDirectionTabs();
+  modal.hidden = false;
+  loadSecurityLists(vm);
+}
+
+function closeSecurityListModal() {
+  document.getElementById('security-list-modal').hidden = true;
+  securityListModalVM = null;
+  securityListModalLists = [];
+  securityListModalNSGs = [];
+}
+
+async function loadSecurityLists(vm, selectedListId = '') {
+  const listSelect = document.getElementById('sg-modal-list');
+  const body = document.getElementById('sg-modal-body');
+  const msgEl = document.getElementById('sg-modal-message');
+  msgEl.textContent = '';
+  document.getElementById('sg-modal-resource-label').textContent = securityListModalResourceType === 'network-security-group'
+    ? '网络安全组'
+    : '安全列表';
+  document.getElementById('sg-nsg-create-row').hidden = securityListModalResourceType !== 'network-security-group';
+
+  try {
+    const path = securityListModalResourceType === 'network-security-group'
+      ? `/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/network-security-groups`
+      : `/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/security-lists`;
+    const data = await fetchJSON(path);
+    if (securityListModalResourceType === 'network-security-group') {
+      securityListModalNSGs = Array.isArray(data.networkSecurityGroups) ? data.networkSecurityGroups : [];
+    } else {
+      securityListModalLists = Array.isArray(data.securityLists) ? data.securityLists : [];
+    }
+
+    const resources = currentSecurityResources();
+    if (resources.length === 0) {
+      listSelect.innerHTML = securityListModalResourceType === 'network-security-group'
+        ? '<option value="">未关联网络安全组</option>'
+        : '<option value="">未关联安全列表</option>';
+      body.innerHTML = securityListModalResourceType === 'network-security-group'
+        ? '<div class="empty-state compact">主 VNIC 未关联网络安全组，可在上方创建并关联。</div>'
+        : '<div class="empty-state compact">主 VNIC 所在子网未关联 OCI 安全列表。</div>';
+      return;
+    }
+
+    const nextSelected = selectedListId || resources[0].id;
+    listSelect.innerHTML = resources.map(list => `
+      <option value="${escapeAttr(list.id)}" ${list.id === nextSelected ? 'selected' : ''}>${escapeHtml(list.name || list.id)}</option>
+    `).join('');
+    renderSecurityListRules(nextSelected);
+  } catch (err) {
+    body.innerHTML = `<div class="empty-state compact error">${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function selectedSecurityList() {
+  const selectedID = document.getElementById('sg-modal-list')?.value || '';
+  return currentSecurityResources().find(list => list.id === selectedID) || null;
+}
+
+function currentSecurityResources() {
+  return securityListModalResourceType === 'network-security-group'
+    ? securityListModalNSGs
+    : securityListModalLists;
+}
+
+function renderSecurityListRules(listId) {
+  const body = document.getElementById('sg-modal-body');
+  const list = currentSecurityResources().find(item => item.id === listId);
+  if (!list) {
+    body.innerHTML = '<div class="empty-state compact">请选择安全列表。</div>';
+    return;
+  }
+
+  const rules = securityListModalDirection === 'egress'
+    ? (Array.isArray(list.egressRules) ? list.egressRules : [])
+    : (Array.isArray(list.ingressRules) ? list.ingressRules : []);
+  if (rules.length === 0) {
+    body.innerHTML = `<div class="empty-state compact">暂无${securityListModalDirection === 'egress' ? '出站' : '入站'}规则，点击下方“添加安全规则”创建。</div>`;
+    return;
+  }
+
+  body.innerHTML = rules.map((rule, index) => securityListRuleRowHtml(rule, index)).join('');
+  updateSecurityListProtocolControls();
+}
+
+function securityListRuleRowHtml(rule = {}, index = 0) {
+  const protocol = normalizeSecurityListProtocol(rule.protocol || '6');
+  const minPort = rule.minPort ?? '';
+  const maxPort = rule.maxPort ?? '';
+  const icmpType = rule.icmpType ?? '';
+  const icmpCode = rule.icmpCode ?? '';
+  const endpoint = securityListModalDirection === 'egress'
+    ? (rule.destination || '0.0.0.0/0')
+    : (rule.source || '0.0.0.0/0');
+  const endpointType = securityListModalDirection === 'egress'
+    ? (rule.destinationType || 'CIDR_BLOCK')
+    : (rule.sourceType || 'CIDR_BLOCK');
+  const description = rule.description || '';
+  const rowLabel = `规则 ${index + 1}`;
+  const endpointLabel = securityListModalDirection === 'egress' ? '目标 CIDR' : '来源 CIDR';
+  const endpointTypeLabel = securityListModalDirection === 'egress' ? '目标类型' : '来源类型';
+  const protocolOption = SECURITY_PROTOCOL_OPTIONS.find(option =>
+    option.value === protocol && option.minPort === minPort && option.maxPort === maxPort
+  );
+  const protocolSelectValue = protocolOption ? securityProtocolOptionValue(protocolOption) : protocol;
+
+  return `<div class="sg-rule-row" data-rule-id="${escapeAttr(rule.id || '')}">
+    <div class="sg-rule-meta">
+      <strong>${escapeHtml(rowLabel)}</strong>
+      <span>${rule.id ? escapeHtml(rule.id) : (securityListModalDirection === 'egress' ? '出站' : '入站') + '安全规则'}</span>
+    </div>
+    <div class="sg-rule-fields">
+      <label class="field compact">
+        <span>协议</span>
+        <select class="sg-f-protocol">${securityProtocolOptionsHtml(protocolSelectValue)}</select>
+      </label>
+      <label class="field compact">
+        <span>${endpointLabel}</span>
+        <input type="text" class="sg-f-endpoint" value="${escapeAttr(endpoint)}" placeholder="0.0.0.0/0">
+      </label>
+      <label class="field compact">
+        <span>端口起</span>
+        <input type="number" class="sg-f-min-port" min="1" max="65535" value="${escapeAttr(minPort)}" placeholder="全部">
+      </label>
+      <label class="field compact">
+        <span>端口止</span>
+        <input type="number" class="sg-f-max-port" min="1" max="65535" value="${escapeAttr(maxPort)}" placeholder="同起始">
+      </label>
+      <label class="field compact">
+        <span>ICMP 类型</span>
+        <select class="sg-f-icmp-type">${icmpTypeOptionsHtml(icmpType)}</select>
+      </label>
+      <label class="field compact">
+        <span>ICMP 代码</span>
+        <select class="sg-f-icmp-code">${icmpCodeOptionsHtml(icmpType, icmpCode)}</select>
+      </label>
+      <label class="field compact">
+        <span>${endpointTypeLabel}</span>
+        <select class="sg-f-endpoint-type">
+          <option value="CIDR_BLOCK" ${endpointType === 'CIDR_BLOCK' ? 'selected' : ''}>CIDR</option>
+          <option value="SERVICE_CIDR_BLOCK" ${endpointType === 'SERVICE_CIDR_BLOCK' ? 'selected' : ''}>Service CIDR</option>
+          <option value="NETWORK_SECURITY_GROUP" ${endpointType === 'NETWORK_SECURITY_GROUP' ? 'selected' : ''}>Network Security Group</option>
+        </select>
+      </label>
+      <label class="switch-row compact">
+        <input type="checkbox" class="sg-f-stateless" ${rule.isStateless ? 'checked' : ''}>
+        <span>无状态</span>
+      </label>
+      <label class="field compact sg-description-field">
+        <span>描述</span>
+        <input type="text" class="sg-f-description" value="${escapeAttr(description)}" placeholder="可选">
+      </label>
+    </div>
+    <div class="sg-rule-footer">
+      <div class="sg-allow-summary">
+        <span>允许</span>
+        <strong>${escapeHtml(securityRuleAllowText({ protocol, minPort, maxPort, icmpType, icmpCode }))}</strong>
+      </div>
+      <button class="ghost-btn dns-remove-btn sg-rule-delete-btn" type="button">删除</button>
+    </div>
+  </div>`;
+}
+
+function normalizeSecurityListProtocol(protocol) {
+  const value = String(protocol || '').toLowerCase();
+  if (value === 'tcp') return '6';
+  if (value === 'udp') return '17';
+  if (value === 'icmp') return '1';
+  if (value === 'all') return value;
+  const parsed = Number(value);
+  if (Number.isInteger(parsed) && parsed >= 0 && parsed <= 255) return String(parsed);
+  return 'all';
+}
+
+function securityProtocolOptionValue(option) {
+  return [option.value, option.minPort ?? '', option.maxPort ?? ''].join('|');
+}
+
+function securityProtocolOptionsHtml(selected) {
+  return SECURITY_PROTOCOL_OPTIONS.map(option => {
+    const value = securityProtocolOptionValue(option);
+    return `<option value="${escapeAttr(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(option.label)}</option>`;
+  }).join('');
+}
+
+function parseSecurityProtocolSelection(value) {
+  const [protocol, minPort, maxPort] = String(value || 'all').split('|');
+  return {
+    protocol: protocol || 'all',
+    minPort: minPort === '' ? null : Number(minPort),
+    maxPort: maxPort === '' ? null : Number(maxPort)
+  };
+}
+
+function icmpTypeOptionsHtml(selected) {
+  const selectedValue = selected === null || selected === undefined ? '' : String(selected);
+  return ICMP_TYPE_OPTIONS.map(option => `
+    <option value="${escapeAttr(option.value)}" ${option.value === selectedValue ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+  `).join('');
+}
+
+function icmpCodeOptionsHtml(type, selected) {
+  const typeValue = type === null || type === undefined ? '' : String(type);
+  const selectedValue = selected === null || selected === undefined ? '' : String(selected);
+  const options = ICMP_CODE_OPTIONS[typeValue] || ICMP_CODE_OPTIONS[''];
+  return options.map(option => `
+    <option value="${escapeAttr(option.value)}" ${option.value === selectedValue ? 'selected' : ''}>${escapeHtml(option.label)}</option>
+  `).join('');
+}
+
+function protocolDisplayName(protocol) {
+  if (protocol === 'all') return '所有协议';
+  if (protocol === '1') return 'ICMP';
+  if (protocol === '6') return 'TCP';
+  if (protocol === '17') return 'UDP';
+  return `协议 ${protocol}`;
+}
+
+function securityRuleAllowText(rule) {
+  const protocol = normalizeSecurityListProtocol(rule.protocol);
+  if (protocol === 'all') return '所有端口的所有流量';
+  if (protocol === '6' || protocol === '17') {
+    const minPort = rule.minPort ?? '';
+    const maxPort = rule.maxPort ?? '';
+    if (minPort === '' && maxPort === '') return `以下端口的 ${protocolDisplayName(protocol)} 流量：全部`;
+    const endPort = maxPort === '' ? minPort : maxPort;
+    return `以下端口的 ${protocolDisplayName(protocol)} 流量：${minPort}-${endPort}`;
+  }
+  if (protocol === '1') {
+    const type = rule.icmpType ?? '';
+    const code = rule.icmpCode ?? '';
+    if (type === '' && code === '') return '以下项的 ICMP 流量：全部';
+    if (code === '') return `ICMP 类型 ${type}：全部代码`;
+    return `ICMP 类型 ${type}，代码 ${code}`;
+  }
+  return `${protocolDisplayName(protocol)} 流量`;
+}
+
+function addSecurityListRuleRow() {
+  const list = selectedSecurityList();
+  if (!list) return;
+
+  const body = document.getElementById('sg-modal-body');
+  if (body.querySelector('.empty-state')) body.innerHTML = '';
+  const index = body.querySelectorAll('.sg-rule-row').length;
+  body.insertAdjacentHTML('beforeend', securityListRuleRowHtml({
+    protocol: '6',
+    source: '0.0.0.0/0',
+    destination: '0.0.0.0/0',
+    sourceType: 'CIDR_BLOCK',
+    destinationType: 'CIDR_BLOCK',
+    minPort: 22,
+    maxPort: 22,
+    isStateless: false
+  }, index));
+  updateSecurityListProtocolControls();
+}
+
+function collectSecurityListRules() {
+  const rows = document.getElementById('sg-modal-body').querySelectorAll('.sg-rule-row');
+  return Array.from(rows).map(row => {
+    const selectedProtocol = parseSecurityProtocolSelection(row.querySelector('.sg-f-protocol')?.value || 'all');
+    const protocol = selectedProtocol.protocol;
+    const minPort = securityRuleNumberValue(row.querySelector('.sg-f-min-port')?.value);
+    const maxPort = securityRuleNumberValue(row.querySelector('.sg-f-max-port')?.value);
+    const icmpType = securityRuleNumberValue(row.querySelector('.sg-f-icmp-type')?.value);
+    const icmpCode = securityRuleNumberValue(row.querySelector('.sg-f-icmp-code')?.value);
+    const endpoint = row.querySelector('.sg-f-endpoint')?.value?.trim() || '';
+    const endpointType = row.querySelector('.sg-f-endpoint-type')?.value || 'CIDR_BLOCK';
+    const rule = {
+      id: row.dataset.ruleId || '',
+      protocol,
+      minPort: protocol === '6' || protocol === '17' ? minPort : null,
+      maxPort: protocol === '6' || protocol === '17' ? maxPort : null,
+      icmpType: protocol === '1' ? icmpType : null,
+      icmpCode: protocol === '1' ? icmpCode : null,
+      description: row.querySelector('.sg-f-description')?.value?.trim() || '',
+      isStateless: row.querySelector('.sg-f-stateless')?.checked || false
+    };
+    if (securityListModalDirection === 'egress') {
+      rule.destination = endpoint;
+      rule.destinationType = endpointType;
+    } else {
+      rule.source = endpoint;
+      rule.sourceType = endpointType;
+    }
+    return rule;
+  });
+}
+
+function securityRuleNumberValue(value) {
+  const trimmed = String(value || '').trim();
+  if (trimmed === '') return null;
+  const parsed = Number(trimmed);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+async function saveSecurityListRules() {
+  const vm = securityListModalVM;
+  const list = selectedSecurityList();
+  const msgEl = document.getElementById('sg-modal-message');
+  if (!vm || !list) return;
+
+  msgEl.textContent = '保存中...';
+  msgEl.className = 'form-message';
+
+  try {
+    const currentRules = collectSecurityListRules();
+    const path = securityListModalResourceType === 'network-security-group'
+      ? `/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/network-security-groups/${encodeURIComponent(list.id)}/rules`
+      : `/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/security-lists/${encodeURIComponent(list.id)}/rules`;
+    await fetchJSON(path, {
+      method: 'POST',
+      body: {
+        ingressRules: securityListModalDirection === 'ingress' ? currentRules : (list.ingressRules || []),
+        egressRules: securityListModalDirection === 'egress' ? currentRules : (list.egressRules || [])
+      }
+    });
+    msgEl.textContent = '安全规则已保存。';
+    msgEl.className = 'form-message success';
+    addLog(`OCI 安全规则已保存：${list.name || list.id}`, 'success');
+    loadSecurityLists(vm, list.id);
+  } catch (err) {
+    msgEl.textContent = err.message;
+    msgEl.className = 'form-message error';
+  }
+}
+
+function updateSecurityListProtocolControls() {
+  document.querySelectorAll('.sg-rule-row').forEach(row => {
+    const protocol = parseSecurityProtocolSelection(row.querySelector('.sg-f-protocol')?.value || 'all').protocol;
+    const portDisabled = protocol !== '6' && protocol !== '17';
+    const icmpDisabled = protocol !== '1';
+    row.querySelectorAll('.sg-f-min-port, .sg-f-max-port').forEach(input => {
+      input.disabled = portDisabled;
+    });
+    row.querySelectorAll('.sg-f-icmp-type, .sg-f-icmp-code').forEach(input => {
+      input.disabled = icmpDisabled;
+    });
+  });
+}
+
+function applySecurityProtocolPreset(row) {
+  if (!row) return;
+  const selected = parseSecurityProtocolSelection(row.querySelector('.sg-f-protocol')?.value || 'all');
+  const minPort = row.querySelector('.sg-f-min-port');
+  const maxPort = row.querySelector('.sg-f-max-port');
+  if ((selected.protocol === '6' || selected.protocol === '17') && selected.minPort !== null) {
+    if (minPort) minPort.value = selected.minPort;
+    if (maxPort) maxPort.value = selected.maxPort ?? selected.minPort;
+  }
+  if (selected.protocol !== '1') {
+    const icmpType = row.querySelector('.sg-f-icmp-type');
+    const icmpCode = row.querySelector('.sg-f-icmp-code');
+    if (icmpType) icmpType.value = '';
+    if (icmpCode) icmpCode.innerHTML = icmpCodeOptionsHtml('', '');
+  }
+}
+
+function updateSecurityRuleDirectionTabs() {
+  document.querySelectorAll('.sg-direction-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.direction === securityListModalDirection);
+  });
+}
+
+function updateSecurityResourceTabs() {
+  document.querySelectorAll('.sg-resource-tab').forEach(tab => {
+    tab.classList.toggle('active', tab.dataset.resourceType === securityListModalResourceType);
+  });
+}
+
+async function createNetworkSecurityGroupForVM() {
+  const vm = securityListModalVM;
+  const msgEl = document.getElementById('sg-modal-message');
+  if (!vm) return;
+
+  const name = document.getElementById('sg-new-nsg-name')?.value?.trim() || '';
+  msgEl.textContent = '创建网络安全组中...';
+  msgEl.className = 'form-message';
+
+  try {
+    const data = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/network-security-groups`, {
+      method: 'POST',
+      body: { name }
+    });
+    const created = data.networkSecurityGroup || {};
+    msgEl.textContent = '网络安全组已创建并关联。';
+    msgEl.className = 'form-message success';
+    addLog(`OCI 网络安全组已创建并关联：${created.name || created.id || name}`, 'success');
+    document.getElementById('sg-new-nsg-name').value = '';
+    loadSecurityLists(vm, created.id || '');
+  } catch (err) {
+    msgEl.textContent = err.message;
+    msgEl.className = 'form-message error';
+  }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('sg-modal-close')?.addEventListener('click', closeSecurityListModal);
+  document.getElementById('sg-modal-add')?.addEventListener('click', addSecurityListRuleRow);
+  document.getElementById('sg-modal-save')?.addEventListener('click', saveSecurityListRules);
+  document.getElementById('sg-create-nsg')?.addEventListener('click', createNetworkSecurityGroupForVM);
+  document.getElementById('sg-modal-list')?.addEventListener('change', event => {
+    renderSecurityListRules(event.target.value);
+  });
+  document.querySelectorAll('.sg-resource-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      securityListModalResourceType = tab.dataset.resourceType || 'security-list';
+      updateSecurityResourceTabs();
+      if (securityListModalVM) loadSecurityLists(securityListModalVM);
+    });
+  });
+  document.querySelectorAll('.sg-direction-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      securityListModalDirection = tab.dataset.direction || 'ingress';
+      updateSecurityRuleDirectionTabs();
+      const list = selectedSecurityList();
+      renderSecurityListRules(list ? list.id : '');
+    });
+  });
+  document.getElementById('security-list-modal')?.addEventListener('click', event => {
+    if (event.target.id === 'security-list-modal') closeSecurityListModal();
+  });
+  document.getElementById('sg-modal-body')?.addEventListener('click', event => {
+    const btn = event.target.closest('.sg-rule-delete-btn');
+    if (!btn) return;
+    btn.closest('.sg-rule-row')?.remove();
+    if (!document.getElementById('sg-modal-body').querySelector('.sg-rule-row')) {
+      document.getElementById('sg-modal-body').innerHTML = `<div class="empty-state compact">暂无${securityListModalDirection === 'egress' ? '出站' : '入站'}规则</div>`;
+    }
+  });
+  document.getElementById('sg-modal-body')?.addEventListener('change', event => {
+    const protocolSelect = event.target.closest('.sg-f-protocol');
+    if (protocolSelect) {
+      applySecurityProtocolPreset(protocolSelect.closest('.sg-rule-row'));
+      updateSecurityListProtocolControls();
+    }
+    const icmpTypeSelect = event.target.closest('.sg-f-icmp-type');
+    if (icmpTypeSelect) {
+      const row = icmpTypeSelect.closest('.sg-rule-row');
+      const codeSelect = row?.querySelector('.sg-f-icmp-code');
+      if (codeSelect) codeSelect.innerHTML = icmpCodeOptionsHtml(icmpTypeSelect.value, '');
+    }
   });
 });

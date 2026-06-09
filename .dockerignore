@@ -5,3 +5,11 @@ config/keys
 config/dns.conf
 *.pem
 *.log
+bin
+dist
+release
+runtime
+tmp
+*.test
+*.out
+coverage.*
