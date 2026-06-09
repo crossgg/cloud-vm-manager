@@ -92,6 +92,79 @@ func saveYAMLAuthConfig(path string, data []byte, auth AuthConfig) error {
 	return os.WriteFile(path, next, 0600)
 }
 
+func SaveUpdateConfig(path string, update UpdateConfig) error {
+	if path == "" {
+		return fmt.Errorf("config path is empty")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	if strings.Contains(content, "=begin") {
+		return os.WriteFile(path, []byte(upsertUpdateBlock(content, update)), 0600)
+	}
+	return saveYAMLUpdateConfig(path, data, update)
+}
+
+func upsertUpdateBlock(content string, update UpdateConfig) string {
+	block := renderUpdateBlock(update)
+	lines := strings.Split(content, "\n")
+	start, end := -1, -1
+	for i, raw := range lines {
+		line := strings.ToLower(strings.TrimSpace(raw))
+		if line == "update=begin" {
+			start = i
+			continue
+		}
+		if start >= 0 && line == "update=end" {
+			end = i
+			break
+		}
+	}
+
+	if start >= 0 && end >= start {
+		next := make([]string, 0, len(lines)-(end-start)+strings.Count(block, "\n")+1)
+		next = append(next, lines[:start]...)
+		next = append(next, strings.Split(block, "\n")...)
+		next = append(next, lines[end+1:]...)
+		return strings.Join(next, "\n")
+	}
+
+	trimmed := strings.TrimRight(content, "\r\n")
+	if trimmed == "" {
+		return block + "\n"
+	}
+	return trimmed + "\n\n" + block + "\n"
+}
+
+func renderUpdateBlock(update UpdateConfig) string {
+	return strings.Join([]string{
+		"update=begin",
+		"[main]",
+		"download_proxy=" + update.DownloadProxy,
+		"update=end",
+	}, "\n")
+}
+
+func saveYAMLUpdateConfig(path string, data []byte, update UpdateConfig) error {
+	var values map[string]interface{}
+	if err := yaml.Unmarshal(data, &values); err != nil {
+		return err
+	}
+	if values == nil {
+		values = map[string]interface{}{}
+	}
+	values["update"] = map[string]interface{}{
+		"download_proxy": update.DownloadProxy,
+	}
+	next, err := yaml.Marshal(values)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(path, next, 0600)
+}
+
 // SaveDNSConfig writes the entire dns.conf file from the given cloudflare accounts and dns bindings.
 // It performs deduplication: duplicate cloudflare names or dns binding names are merged (last wins).
 func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings []DNSBinding) error {

@@ -21,6 +21,11 @@ type Config struct {
 	Cloudflare    []CloudflareConfig `yaml:"-"`
 	DNSBindings   []DNSBinding       `yaml:"-"`
 	Auth          AuthConfig         `yaml:"auth"`
+	Update        UpdateConfig       `yaml:"update"`
+}
+
+type UpdateConfig struct {
+	DownloadProxy string `yaml:"download_proxy"`
 }
 
 type AzureConfig struct {
@@ -287,6 +292,7 @@ func parseBlockConfig(content string) (*Config, error) {
 		"cloudflare": {},
 		"dns":        {},
 		"auth":       {},
+		"update":     {},
 	}
 
 	currentProvider := ""
@@ -413,6 +419,11 @@ func parseBlockConfig(content string) (*Config, error) {
 			SessionSecret: values["session_secret"],
 			SessionHours:  intValueOrDefault(values["session_hours"], 12),
 			CookieSecure:  boolValue(values["cookie_secure"]),
+		}
+	}
+	if values, ok := sections["update"]["main"]; ok {
+		cfg.Update = UpdateConfig{
+			DownloadProxy: values["download_proxy"],
 		}
 	}
 

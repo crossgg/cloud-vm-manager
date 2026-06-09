@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -33,6 +34,7 @@ func main() {
 	r.POST("/api/update/apply", applyUpdate)
 	r.GET("/api/settings/auth", getAuthSettings)
 	r.POST("/api/settings/auth", updateAuthSettings)
+	r.POST("/api/settings/update", updateUpdateSettings)
 	r.GET("/api/accounts", listAccounts)
 	r.GET("/api/vms", listVMs)
 	r.GET("/api/account/:provider/:account/balance", getAccountBalance)
@@ -279,6 +281,36 @@ func getCloudService(c *gin.Context) (CloudService, *CloudflareService, bool) {
 		return nil, nil, false
 	}
 	return service, cloudflare, true
+}
+
+func updateUpdateSettings(c *gin.Context) {
+	var payload struct {
+		DownloadProxy string `json:"downloadProxy"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	configPath := currentConfigPath()
+	updateCfg := UpdateConfig{
+		DownloadProxy: strings.TrimSpace(payload.DownloadProxy),
+	}
+
+	if err := SaveUpdateConfig(configPath, updateCfg); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ReloadRuntimeConfig(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("saved but reload failed: %v", err)})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "更新配置已保存，并已自动重载生效。",
+	})
 }
 
 func serviceKey(provider, account string) string {

@@ -57,6 +57,12 @@
             <span>系统设置</span>
           </a>
         </nav>
+        <div class="sidebar-footer">
+          <a href="https://github.com/crossgg/cloud-vm-manager" target="_blank" rel="noopener noreferrer" class="repo-link">
+            <i class="bi bi-github"></i>
+            <span>crossgg/cloud-vm-manager</span>
+          </a>
+        </div>
       </aside>
 
       <main class="content-area">
@@ -266,7 +272,10 @@
                 <span>自定义加速源</span>
                 <input id="update-custom-proxy" type="text" placeholder="例如 https://gh-proxy.com/">
               </label>
-              <button id="check-update-btn" class="secondary-btn" type="button">检查更新</button>
+              <div style="display: flex; gap: 10px; margin-bottom: 15px;">
+                <button id="save-update-proxy-btn" class="secondary-btn" type="button" style="flex: 1;">保存加速源</button>
+                <button id="check-update-btn" class="secondary-btn" type="button" style="flex: 1;">检查更新</button>
+              </div>
               <button id="apply-update-btn" class="primary-btn" type="button">更新并重启</button>
               <div id="update-message" class="form-message"></div>
             </div>
