@@ -81,6 +81,7 @@ jobs:
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
           go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -o "dist/package/${APP_NAME}${EXT}" .
+          cp -r public dist/package/public
           cat > dist/package/README-update.txt <<'TXT'
           This archive contains a cloud-vm-manager binary built by GitHub Actions.
           The in-app updater downloads the matching archive for the current OS/architecture.

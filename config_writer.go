@@ -243,3 +243,102 @@ func ParseDNSConfContent(content string) ([]CloudflareConfig, []DNSBinding, erro
 	}
 	return cfg.Cloudflare, cfg.DNSBindings, nil
 }
+
+// SaveDTMonitorConfig persists data transfer monitor settings for an OCI account.
+// It updates the dt_monitor_* keys within the OCI config block for the given account.
+func SaveDTMonitorConfig(path string, accountName string, dtCfg DataTransferConfig) error {
+	if path == "" {
+		return fmt.Errorf("config path is empty")
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	content := string(data)
+	if !strings.Contains(content, "=begin") {
+		return fmt.Errorf("dt_monitor config persistence only supported for block config format")
+	}
+
+	lines := strings.Split(content, "\n")
+	inOCI := false
+	inSection := false
+	sectionName := ""
+	insertionLine := -1
+
+	dtKeys := map[string]string{
+		"dt_monitor_enabled":     strconv.FormatBool(dtCfg.Enabled),
+		"dt_monitor_interval":    strconv.Itoa(dtCfg.Interval),
+		"dt_monitor_threshold":   strconv.FormatFloat(dtCfg.Threshold, 'f', -1, 64),
+		"dt_monitor_auto_stop":   strconv.FormatBool(dtCfg.AutoStop),
+		"dt_monitor_stop_method": dtCfg.StopMethod,
+	}
+
+	// Track which dt keys we've already updated in the file
+	updatedKeys := map[string]bool{}
+	result := make([]string, 0, len(lines)+len(dtKeys))
+
+	for i, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		lower := strings.ToLower(line)
+
+		if lower == "oci=begin" {
+			inOCI = true
+			result = append(result, rawLine)
+			continue
+		}
+		if lower == "oci=end" {
+			// Before closing the OCI block, insert any remaining dt keys for the target account
+			if inSection && sectionName == accountName {
+				for key, value := range dtKeys {
+					if !updatedKeys[key] {
+						result = append(result, key+"="+value)
+						updatedKeys[key] = true
+					}
+				}
+			}
+			inOCI = false
+			inSection = false
+			sectionName = ""
+			result = append(result, rawLine)
+			continue
+		}
+
+		if inOCI {
+			if strings.HasPrefix(line, "[") && strings.HasSuffix(line, "]") {
+				// Before switching to a new section, insert remaining dt keys if we were in the target section
+				if inSection && sectionName == accountName {
+					for key, value := range dtKeys {
+						if !updatedKeys[key] {
+							result = append(result, key+"="+value)
+							updatedKeys[key] = true
+						}
+					}
+				}
+				sectionName = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(line, "["), "]"))
+				inSection = true
+				_ = insertionLine
+				insertionLine = i
+				result = append(result, rawLine)
+				continue
+			}
+
+			// Check if this line is a dt_monitor key to update
+			if inSection && sectionName == accountName {
+				key, _, hasEquals := strings.Cut(line, "=")
+				if hasEquals {
+					trimmedKey := strings.TrimSpace(key)
+					if newVal, isDTKey := dtKeys[trimmedKey]; isDTKey {
+						result = append(result, trimmedKey+"="+newVal)
+						updatedKeys[trimmedKey] = true
+						continue
+					}
+				}
+			}
+		}
+
+		result = append(result, rawLine)
+	}
+
+	return os.WriteFile(path, []byte(strings.Join(result, "\n")), 0600)
+}
+

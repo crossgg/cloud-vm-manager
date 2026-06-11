@@ -192,23 +192,39 @@ func installReleaseAsset(release githubRelease, asset githubReleaseAsset, downlo
 		return err
 	}
 
-	extractedPath := filepath.Join(updateTempDir, "cloud-vm-manager")
-	_ = os.Remove(extractedPath)
+	tempBinPath := filepath.Join(updateTempDir, "cloud-vm-manager")
+	_ = os.Remove(tempBinPath)
+	tempPublicPath := filepath.Join(updateTempDir, "public")
+	_ = os.RemoveAll(tempPublicPath)
+
+	var hasPublic bool
+	var err error
 	if strings.HasSuffix(asset.Name, ".zip") {
-		if err := extractBinaryFromZip(archivePath, extractedPath); err != nil {
+		hasPublic, err = extractArchiveFromZip(archivePath, tempBinPath, tempPublicPath)
+		if err != nil {
 			return err
 		}
 	} else {
-		if err := extractBinaryFromTarGz(archivePath, extractedPath); err != nil {
+		hasPublic, err = extractArchiveFromTarGz(archivePath, tempBinPath, tempPublicPath)
+		if err != nil {
 			return err
 		}
 	}
-	if err := os.Chmod(extractedPath, 0o755); err != nil {
+
+	if err := os.Chmod(tempBinPath, 0o755); err != nil {
 		return err
 	}
-	if err := os.Rename(extractedPath, runtimeBinPath); err != nil {
+	if err := os.Rename(tempBinPath, runtimeBinPath); err != nil {
 		return err
 	}
+
+	if hasPublic {
+		_ = os.RemoveAll("./public")
+		if err := os.Rename(tempPublicPath, "./public"); err != nil {
+			return fmt.Errorf("failed to move updated public dir: %v", err)
+		}
+	}
+
 	return nil
 }
 
@@ -319,52 +335,109 @@ func fileSHA256(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
-func extractBinaryFromZip(path, dest string) error {
-	reader, err := zip.OpenReader(path)
+func extractArchiveFromZip(archivePath, destBin, destPublicDir string) (bool, error) {
+	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer reader.Close()
+
+	binExtracted := false
+	hasPublic := false
 	for _, file := range reader.File {
-		if filepath.Base(file.Name) != "cloud-vm-manager" && filepath.Base(file.Name) != "cloud-vm-manager.exe" {
-			continue
+		name := strings.TrimPrefix(file.Name, "./")
+		baseName := filepath.Base(name)
+
+		if (baseName == "cloud-vm-manager" || baseName == "cloud-vm-manager.exe") && !file.FileInfo().IsDir() {
+			rc, err := file.Open()
+			if err != nil {
+				return false, err
+			}
+			err = writeFileFromReader(destBin, rc)
+			rc.Close()
+			if err != nil {
+				return false, err
+			}
+			binExtracted = true
+		} else if (strings.HasPrefix(name, "public/") || strings.Contains(name, "/public/")) && !file.FileInfo().IsDir() {
+			pubPath := name
+			if idx := strings.Index(name, "public/"); idx != -1 {
+				pubPath = name[idx:]
+			}
+			rc, err := file.Open()
+			if err != nil {
+				return false, err
+			}
+			targetPath := filepath.Join(destPublicDir, strings.TrimPrefix(pubPath, "public/"))
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				rc.Close()
+				return false, err
+			}
+			err = writeFileFromReader(targetPath, rc)
+			rc.Close()
+			if err != nil {
+				return false, err
+			}
+			hasPublic = true
 		}
-		rc, err := file.Open()
-		if err != nil {
-			return err
-		}
-		defer rc.Close()
-		return writeFileFromReader(dest, rc)
 	}
-	return fmt.Errorf("archive does not contain cloud-vm-manager binary")
+	if !binExtracted {
+		return false, fmt.Errorf("archive does not contain cloud-vm-manager binary")
+	}
+	return hasPublic, nil
 }
 
-func extractBinaryFromTarGz(path, dest string) error {
-	f, err := os.Open(path)
+func extractArchiveFromTarGz(archivePath, destBin, destPublicDir string) (bool, error) {
+	f, err := os.Open(archivePath)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer f.Close()
 	gz, err := gzip.NewReader(f)
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer gz.Close()
 	tr := tar.NewReader(gz)
+
+	binExtracted := false
+	hasPublic := false
 	for {
 		header, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			return err
+			return false, err
 		}
-		if header.Typeflag != tar.TypeReg || filepath.Base(header.Name) != "cloud-vm-manager" {
-			continue
+
+		name := header.Name
+		name = strings.TrimPrefix(name, "./")
+
+		if filepath.Base(name) == "cloud-vm-manager" && header.Typeflag == tar.TypeReg {
+			if err := writeFileFromReader(destBin, tr); err != nil {
+				return false, err
+			}
+			binExtracted = true
+		} else if (strings.HasPrefix(name, "public/") || strings.Contains(name, "/public/")) && header.Typeflag == tar.TypeReg {
+			pubPath := name
+			if idx := strings.Index(name, "public/"); idx != -1 {
+				pubPath = name[idx:]
+			}
+			targetPath := filepath.Join(destPublicDir, strings.TrimPrefix(pubPath, "public/"))
+			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
+				return false, err
+			}
+			if err := writeFileFromReader(targetPath, tr); err != nil {
+				return false, err
+			}
+			hasPublic = true
 		}
-		return writeFileFromReader(dest, tr)
 	}
-	return fmt.Errorf("archive does not contain cloud-vm-manager binary")
+	if !binExtracted {
+		return false, fmt.Errorf("archive does not contain cloud-vm-manager binary")
+	}
+	return hasPublic, nil
 }
 
 func writeFileFromReader(dest string, reader io.Reader) error {

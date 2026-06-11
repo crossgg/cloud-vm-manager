@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@400;500;600;700;800&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0%25' y1='0%25' x2='100%25' y2='100%25'%3E%3Cstop offset='0%25' stop-color='%2300f2fe'/%3E%3Cstop offset='100%25' stop-color='%234facfe'/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width='100' height='100' rx='22' fill='url(%23g)'/%3E%3Ctext x='50' y='64' font-family='system-ui, sans-serif' font-weight='800' font-size='42' fill='%23080c14' text-anchor='middle'%3EVM%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="/public/style.css">
 </head>
 <body>
@@ -44,10 +45,14 @@
             <i class="bi bi-grid-1x2"></i>
             <span>概览</span>
           </a>
-          <a href="#" class="nav-item" data-section="instances">
-            <i class="bi bi-cpu"></i>
-            <span>实例管理</span>
+          <a href="#" class="nav-item" data-section="instances" id="nav-instances-btn">
+            <span class="nav-item-content">
+              <i class="bi bi-cpu"></i>
+              <span>实例管理</span>
+            </span>
+            <span class="nav-toggle" id="instances-toggle-btn"><i class="bi bi-plus-lg"></i></span>
           </a>
+          <div class="sub-nav-menu collapsed" id="sidebar-accounts-menu" style="display: none;"></div>
           <a href="#" class="nav-item" data-section="dns">
             <i class="bi bi-globe"></i>
             <span>DNS 管理</span>
@@ -99,19 +104,87 @@
             <button id="refresh-current-btn" class="secondary-btn" type="button">刷新当前账号</button>
           </div>
 
-          <div class="account-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>账号配置</h3>
-                <p>启动后不会自动读取云端机器，点击账号后才会加载。</p>
-              </div>
+          <div class="account-panel-compact">
+            <div class="account-panel-heading">
+              <span>当前账号：</span>
               <span id="selected-account" class="selected-account">未加载</span>
             </div>
-            <div id="account-list" class="account-list">
+            <div id="account-list" class="account-list-horizontal">
               <div class="empty-state compact">正在读取本地账号配置...</div>
             </div>
-            <div id="account-balance" class="account-balance">
-              <div class="empty-state compact">Azure 账号可在这里查询余额。</div>
+          </div>
+
+          <div id="dt-monitor-panel" class="dt-monitor-panel" hidden>
+            <div class="dt-monitor-header">
+              <div>
+                <h3><i class="bi bi-bar-chart-line"></i> OCI 数据传输用量监控</h3>
+                <p id="dt-monitor-account-label">未选择</p>
+              </div>
+              <div class="dt-monitor-actions">
+                <button id="dt-fetch-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 手动获取</button>
+                <button id="dt-settings-toggle" class="ghost-btn" type="button"><i class="bi bi-gear"></i> 监控设置</button>
+              </div>
+            </div>
+
+            <div class="dt-stats-grid">
+              <div class="dt-stat-card">
+                <span class="dt-stat-label">当月用量</span>
+                <strong id="dt-usage-value">-- GB</strong>
+              </div>
+              <div class="dt-stat-card">
+                <span class="dt-stat-label">阈值</span>
+                <strong id="dt-threshold-value">-- GB</strong>
+              </div>
+              <div class="dt-stat-card">
+                <span class="dt-stat-label">使用率</span>
+                <div class="dt-progress-container">
+                  <div class="dt-progress-bar">
+                    <div id="dt-progress-fill" class="dt-progress-fill" style="width: 0%"></div>
+                  </div>
+                  <span id="dt-percentage-value" class="dt-percentage-text">0%</span>
+                </div>
+              </div>
+              <div class="dt-stat-card">
+                <span class="dt-stat-label">监控状态</span>
+                <span id="dt-monitor-status" class="dt-monitor-status-badge off">未启用</span>
+              </div>
+            </div>
+
+            <div id="dt-last-update" class="dt-last-update">最后更新：--</div>
+
+            <div id="dt-settings-panel" class="dt-settings-area" hidden>
+              <div class="dt-settings-divider">
+                <span>监控设置</span>
+              </div>
+              <div class="dt-settings-fields">
+                <label class="switch-row">
+                  <input id="dt-enabled" type="checkbox">
+                  <span>启用周期检测</span>
+                </label>
+                <div class="dt-settings-row">
+                  <label class="field compact">
+                    <span>检测周期（秒）</span>
+                    <input id="dt-interval" type="number" min="60" step="1" value="300" placeholder="300">
+                  </label>
+                  <label class="field compact">
+                    <span>阈值（GB）</span>
+                    <input id="dt-threshold-input" type="number" min="1" step="1" value="9000" placeholder="9000">
+                  </label>
+                </div>
+                <label class="switch-row">
+                  <input id="dt-auto-stop" type="checkbox">
+                  <span>超阈值自动停机 ⚠️</span>
+                </label>
+                <label class="field compact">
+                  <span>停止方式</span>
+                  <select id="dt-stop-method">
+                    <option value="soft">软停止（SOFTSTOP）</option>
+                    <option value="hard">强制停止（STOP）</option>
+                  </select>
+                </label>
+              </div>
+              <button id="dt-save-config-btn" class="primary-btn" type="button">保存监控配置</button>
+              <div id="dt-config-message" class="form-message"></div>
             </div>
           </div>
 

@@ -37,7 +37,6 @@ func main() {
 	r.POST("/api/settings/update", updateUpdateSettings)
 	r.GET("/api/accounts", listAccounts)
 	r.GET("/api/vms", listVMs)
-	r.GET("/api/account/:provider/:account/balance", getAccountBalance)
 	r.GET("/api/vm/:provider/:account/:name", getVM)
 	r.POST("/api/vm/:provider/:account/:name/start", startVM)
 	r.POST("/api/vm/:provider/:account/:name/stop", stopVM)
@@ -51,6 +50,14 @@ func main() {
 	r.POST("/api/vm/:provider/:account/:name/network-security-groups", createOCINetworkSecurityGroup)
 	r.POST("/api/vm/:provider/:account/:name/network-security-groups/:groupID/rules", saveOCINetworkSecurityGroupRules)
 
+	// OCI data transfer monitoring APIs
+	r.GET("/api/oci/:account/data-transfer", getOCIDataTransfer)
+	r.GET("/api/oci/:account/data-transfer/config", getDataTransferConfig)
+	r.POST("/api/oci/:account/data-transfer/config", saveDataTransferConfig)
+	r.POST("/api/oci/:account/data-transfer/start", startDataTransferMonitor)
+	r.POST("/api/oci/:account/data-transfer/stop", stopDataTransferMonitor)
+	r.GET("/api/oci/:account/data-transfer/status", getDataTransferMonitorStatus)
+
 	// DNS management APIs
 	r.GET("/api/dns/cloudflare", listCloudflareAccounts)
 	r.POST("/api/dns/cloudflare", saveCloudflareAccounts)
@@ -62,6 +69,9 @@ func main() {
 	r.POST("/api/vm/:provider/:account/:name/dns", saveVMDNSBindings)
 
 	authService.RegisterPages(r)
+
+	// Initialize data transfer monitors after all routes are registered
+	initDTMonitors()
 
 	_ = r.Run(":3000")
 }
@@ -211,28 +221,7 @@ func updateDNS(c *gin.Context) {
 	})
 }
 
-func getAccountBalance(c *gin.Context) {
-	provider := c.Param("provider")
-	account := c.Param("account")
-	service, _, ok := serviceSnapshot(provider, account)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("provider/account %s/%s not found", provider, account)})
-		return
-	}
 
-	azure, ok := service.(*AzureService)
-	if !ok {
-		c.JSON(http.StatusNotFound, gin.H{"error": "balance is only supported for Azure accounts"})
-		return
-	}
-
-	balance, err := azure.GetAccountBalance()
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-	c.JSON(http.StatusOK, balance)
-}
 
 func refreshVM(c *gin.Context) {
 	name := c.Param("name")
