@@ -137,6 +137,44 @@ function bindActions() {
       loadAccount({ provider, account: accountName, group });
     }
   });
+  initLogPanelCollapse();
+}
+
+function initLogPanelCollapse() {
+  const logHeader = document.querySelector('.log-header');
+  const logPanel = document.querySelector('.log-panel');
+  if (!logHeader || !logPanel) return;
+
+  const titleSpan = logHeader.querySelector('span');
+  if (titleSpan) {
+    titleSpan.style.display = 'inline-flex';
+    titleSpan.style.alignItems = 'center';
+    titleSpan.style.gap = '8px';
+
+    const icon = document.createElement('i');
+    icon.id = 'log-toggle-icon';
+    icon.className = 'bi bi-dash-lg';
+    icon.style.fontSize = '12px';
+    titleSpan.appendChild(icon);
+  }
+
+  const savedCollapsed = localStorage.getItem('log-panel-collapsed') === 'true';
+  if (savedCollapsed) {
+    logPanel.classList.add('collapsed');
+    const icon = document.getElementById('log-toggle-icon');
+    if (icon) icon.className = 'bi bi-plus-lg';
+  }
+
+  logHeader.addEventListener('click', event => {
+    if (event.target.closest('#clear-log-btn')) return;
+
+    const isCollapsed = logPanel.classList.toggle('collapsed');
+    localStorage.setItem('log-panel-collapsed', isCollapsed);
+    const icon = document.getElementById('log-toggle-icon');
+    if (icon) {
+      icon.className = isCollapsed ? 'bi bi-plus-lg' : 'bi bi-dash-lg';
+    }
+  });
 }
 
 async function checkAuth() {
@@ -762,11 +800,28 @@ function updateDTMonitorVisibility() {
 
 async function loadDTMonitorStatus() {
   if (!selectedAccount || selectedAccount.provider !== 'oci') return;
+  const reqAccount = selectedAccount.account;
+
+  // Clear display to prevent showing previous account's data
+  document.getElementById('dt-usage-value').textContent = '加载中...';
+  document.getElementById('dt-threshold-value').textContent = '-';
+  document.getElementById('dt-percentage-value').textContent = '0%';
+  const progressFill = document.getElementById('dt-progress-fill');
+  if (progressFill) {
+    progressFill.style.width = '0%';
+    progressFill.className = 'dt-progress-fill';
+  }
+  document.getElementById('dt-last-update').textContent = '正在获取最新状态...';
+
   try {
-    const data = await fetchJSON(`/api/oci/${encodeURIComponent(selectedAccount.account)}/data-transfer/status`);
-    updateDTDisplay(data);
+    const data = await fetchJSON(`/api/oci/${encodeURIComponent(reqAccount)}/data-transfer/status`);
+    if (selectedAccount && selectedAccount.account === reqAccount) {
+      updateDTDisplay(data);
+    }
   } catch (error) {
-    addLog(`加载数据传输监控状态失败：${error.message}`, 'error');
+    if (selectedAccount && selectedAccount.account === reqAccount) {
+      addLog(`加载数据传输监控状态失败：${error.message}`, 'error');
+    }
   }
 }
 
@@ -781,8 +836,10 @@ function updateDTDisplay(data) {
     const pct = Math.min(result.percentage, 100);
     document.getElementById('dt-percentage-value').textContent = `${result.percentage.toFixed(1)}%`;
     const progressFill = document.getElementById('dt-progress-fill');
-    progressFill.style.width = `${pct}%`;
-    progressFill.className = 'dt-progress-fill' + (result.percentage > 90 ? ' danger' : result.percentage > 70 ? ' warning' : '');
+    if (progressFill) {
+      progressFill.style.width = `${pct}%`;
+      progressFill.className = 'dt-progress-fill' + (result.percentage > 90 ? ' danger' : result.percentage > 70 ? ' warning' : '');
+    }
 
     if (result.queryTime) {
       const t = new Date(result.queryTime);
@@ -791,6 +848,16 @@ function updateDTDisplay(data) {
   } else if (result && result.error) {
     document.getElementById('dt-usage-value').textContent = '查询失败';
     document.getElementById('dt-last-update').textContent = `错误：${result.error}`;
+  } else {
+    document.getElementById('dt-usage-value').textContent = '-';
+    document.getElementById('dt-threshold-value').textContent = '-';
+    document.getElementById('dt-percentage-value').textContent = '0%';
+    const progressFill = document.getElementById('dt-progress-fill');
+    if (progressFill) {
+      progressFill.style.width = '0%';
+      progressFill.className = 'dt-progress-fill';
+    }
+    document.getElementById('dt-last-update').textContent = '暂无监控数据，请点击手动获取或开启监控';
   }
 
   // Update monitor status badge
@@ -813,24 +880,31 @@ function updateDTDisplay(data) {
 
 async function fetchDTManual() {
   if (!selectedAccount || selectedAccount.provider !== 'oci') return;
+  const reqAccount = selectedAccount.account;
   const btn = document.getElementById('dt-fetch-btn');
   btn.disabled = true;
   btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 查询中...';
-  addLog(`正在查询 OCI 账号 ${selectedAccount.account} 的数据传输用量...`, 'info');
+  addLog(`正在查询 OCI 账号 ${reqAccount} 的数据传输用量...`, 'info');
 
   try {
-    const result = await fetchJSON(`/api/oci/${encodeURIComponent(selectedAccount.account)}/data-transfer`);
-    if (result.error) {
-      addLog(`数据传输查询失败：${result.error}`, 'error');
-    } else {
-      addLog(`OCI ${selectedAccount.account} 当月数据传输：${result.usageGB.toFixed(2)} GB / ${result.threshold.toFixed(0)} GB (${result.percentage.toFixed(1)}%)`, 'success');
+    const result = await fetchJSON(`/api/oci/${encodeURIComponent(reqAccount)}/data-transfer`);
+    if (selectedAccount && selectedAccount.account === reqAccount) {
+      if (result.error) {
+        addLog(`数据传输查询失败：${result.error}`, 'error');
+      } else {
+        addLog(`OCI ${reqAccount} 当月数据传输：${result.usageGB.toFixed(2)} GB / ${result.threshold.toFixed(0)} GB (${result.percentage.toFixed(1)}%)`, 'success');
+      }
+      loadDTMonitorStatus();
     }
-    loadDTMonitorStatus();
   } catch (error) {
-    addLog(`数据传输查询失败：${error.message}`, 'error');
+    if (selectedAccount && selectedAccount.account === reqAccount) {
+      addLog(`数据传输查询失败：${error.message}`, 'error');
+    }
   } finally {
-    btn.disabled = false;
-    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 手动获取';
+    if (selectedAccount && selectedAccount.account === reqAccount) {
+      btn.disabled = false;
+      btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 手动获取';
+    }
   }
 }
 
@@ -981,6 +1055,20 @@ async function saveCFAccounts() {
   }
 }
 
+function maskDomain(domain) {
+  if (!domain) return '';
+  const parts = domain.split('.');
+  if (parts.length <= 1) return domain;
+  return parts[0] + parts.slice(1).map(() => '**').join('.');
+}
+
+function maskRawDNSConfig(rawText) {
+  if (!rawText) return rawText;
+  return rawText.replace(/^(domain\s*=\s*)([^\r\n]+)/gm, (match, prefix, domainVal) => {
+    return prefix + maskDomain(domainVal.trim());
+  });
+}
+
 async function loadDNSBindingsList() {
   const el = document.getElementById('dns-bindings-list');
   try {
@@ -993,7 +1081,7 @@ async function loadDNSBindingsList() {
       <div class="dns-binding-card">
         <div class="dns-binding-info">
           <strong>${escapeHtml(b.name)}</strong>
-          <span>${escapeHtml(b.provider)}/${escapeHtml(b.account)} → ${escapeHtml(b.domain)}</span>
+          <span>${escapeHtml(b.provider)}/${escapeHtml(b.account)} → ${escapeHtml(maskDomain(b.domain))}</span>
           <span class="dns-binding-detail">CF: ${escapeHtml(b.cloudflare)} | VM: ${escapeHtml(b.vm)} | ${escapeHtml(b.type)} | TTL=${b.ttl} | Proxied=${b.proxied}</span>
         </div>
         <button class="ghost-btn dns-delete-binding-btn" type="button" data-name="${escapeAttr(b.name)}">删除</button>
@@ -1021,7 +1109,7 @@ async function loadDNSRaw() {
   const el = document.getElementById('dns-raw-content');
   try {
     const data = await fetchJSON('/api/dns/raw');
-    el.textContent = data.content || '（空）';
+    el.textContent = maskRawDNSConfig(data.content) || '（空）';
   } catch (err) {
     el.textContent = `加载失败：${err.message}`;
   }
