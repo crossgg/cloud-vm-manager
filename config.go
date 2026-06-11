@@ -56,6 +56,7 @@ type OCIConfig struct {
 	CompartmentID string
 	Region        string
 	KeyFile       string
+	DTMonitor     DataTransferConfig
 }
 
 type DefaultConfig struct {
@@ -385,6 +386,13 @@ func parseBlockConfig(content string) (*Config, error) {
 			CompartmentID: valueOrDefault(values["compartment_id"], values["tenancy"]),
 			Region:        values["region"],
 			KeyFile:       values["key_file"],
+			DTMonitor: DataTransferConfig{
+				Enabled:    boolValue(values["dt_monitor_enabled"]),
+				Interval:   intValueOrDefault(values["dt_monitor_interval"], 300),
+				Threshold:  floatValueOrDefault(values["dt_monitor_threshold"], 9000),
+				AutoStop:   boolValue(values["dt_monitor_auto_stop"]),
+				StopMethod: valueOrDefault(values["dt_monitor_stop_method"], "soft"),
+			},
 		})
 	}
 	for _, name := range sortedSectionNames(sections["cloudflare"]) {
@@ -436,6 +444,17 @@ func intValueOrDefault(value string, fallback int) int {
 		return fallback
 	}
 	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+func floatValueOrDefault(value string, fallback float64) float64 {
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(value, 64)
 	if err != nil {
 		return fallback
 	}

@@ -255,7 +255,12 @@ func (o *OCIService) publicIPByPrivateIP(privateIPID string) (map[string]interfa
 
 func (o *OCIService) requestJSON(method, path string, query url.Values, body interface{}, out interface{}, allowNotFound bool) error {
 	endpoint := o.endpoint(path, query)
+	return o.doRequest(method, endpoint, body, out, allowNotFound)
+}
 
+// doRequest sends a signed request to the given full endpoint URL.
+// This is the shared implementation used by both iaas and monitoring APIs.
+func (o *OCIService) doRequest(method, endpoint string, body interface{}, out interface{}, allowNotFound bool) error {
 	var payload []byte
 	var reader io.Reader
 	if body != nil {

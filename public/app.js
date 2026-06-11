@@ -19,7 +19,7 @@ function cacheElements() {
     logoutBtn: document.getElementById('logout-btn'),
     authBadge: document.getElementById('auth-badge'),
     accountList: document.getElementById('account-list'),
-    accountBalance: document.getElementById('account-balance'),
+    sidebarAccountsMenu: document.getElementById('sidebar-accounts-menu'),
     selectedAccount: document.getElementById('selected-account'),
     vmList: document.getElementById('vm-list'),
     vmCount: document.getElementById('vm-count'),
@@ -77,23 +77,64 @@ function bindActions() {
   els.saveUpdateProxyBtn?.addEventListener('click', saveUpdateProxy);
   els.updateProxyMode?.addEventListener('change', updateProxyModeChanged);
   els.authForm.addEventListener('submit', saveAuthSettings);
-
   document.addEventListener('click', event => {
+    // 1. Toggle for Level 2 (instances menu)
+    const instToggle = event.target.closest('#instances-toggle-btn');
+    if (instToggle) {
+      event.stopPropagation();
+      event.preventDefault();
+      const menu = document.getElementById('sidebar-accounts-menu');
+      const icon = instToggle.querySelector('i');
+      if (menu) {
+        const isCollapsed = menu.classList.toggle('collapsed');
+        menu.style.display = isCollapsed ? 'none' : 'flex';
+        if (icon) {
+          icon.className = isCollapsed ? 'bi bi-plus-lg' : 'bi bi-dash-lg';
+        }
+      }
+      return;
+    }
+
+    // 2. Toggle for Level 3 (group accounts)
+    const groupToggle = event.target.closest('.sub-nav-group-title .sub-nav-toggle');
+    if (groupToggle) {
+      event.stopPropagation();
+      event.preventDefault();
+      const groupTitle = groupToggle.closest('.sub-nav-group-title');
+      const group = groupTitle.closest('.sub-nav-group');
+      const items = group.querySelector('.sub-nav-group-items');
+      const icon = groupToggle.querySelector('i');
+      if (items) {
+        const isCollapsed = group.classList.toggle('collapsed');
+        items.style.display = isCollapsed ? 'none' : 'flex';
+        if (icon) {
+          icon.className = isCollapsed ? 'bi bi-plus-lg' : 'bi bi-dash-lg';
+        }
+      }
+      return;
+    }
+
     const actionButton = event.target.closest('.action-btn[data-action]');
     if (actionButton) {
       handleVMAction(actionButton);
       return;
     }
 
-    const balanceButton = event.target.closest('.account-balance-btn');
-    if (balanceButton) {
-      fetchAccountBalance(cardToAccount(balanceButton.closest('.account-card')));
-      return;
-    }
+    const accountBtn = event.target.closest('.account-pill, .sub-nav-account-item');
+    if (accountBtn) {
+      const provider = accountBtn.dataset.provider;
+      const accountName = accountBtn.dataset.account;
+      const group = accountBtn.dataset.group;
 
-    const accountButton = event.target.closest('.account-load-btn');
-    if (accountButton) {
-      loadAccount(cardToAccount(accountButton.closest('.account-card')));
+      if (accountBtn.classList.contains('sub-nav-account-item')) {
+        const instancesNavBtn = document.getElementById('nav-instances-btn');
+        if (instancesNavBtn) {
+          // Switch tab to instances-section
+          instancesNavBtn.click();
+        }
+      }
+
+      loadAccount({ provider, account: accountName, group });
     }
   });
 }
@@ -146,7 +187,9 @@ async function fetchAccounts() {
 
   try {
     const accounts = await fetchJSON('/api/accounts');
-    renderAccounts(Array.isArray(accounts) ? accounts : []);
+    const accountsArr = Array.isArray(accounts) ? accounts : [];
+    renderAccounts(accountsArr);
+    renderSidebarAccounts(accountsArr);
   } catch (error) {
     els.accountList.innerHTML = `<div class="empty-state compact error">读取失败：${escapeHtml(error.message)}</div>`;
     addLog(`读取账号配置失败：${error.message}`, 'error');
@@ -160,54 +203,65 @@ function renderAccounts(accounts) {
   }
 
   els.accountList.innerHTML = accounts.map(account => `
-    <div class="account-card"
+    <button class="account-pill" 
       data-provider="${escapeAttr(account.provider)}"
       data-account="${escapeAttr(account.account)}"
-      data-group="${escapeAttr(account.group || account.provider)}">
-      <button class="account-load-btn" type="button">
-        <span class="account-provider">${escapeHtml(account.provider)}</span>
-        <span class="account-name">${escapeHtml(account.account)}</span>
-        <span class="account-group">${escapeHtml(account.group || account.provider)}</span>
-      </button>
-      ${account.provider === 'azure' ? '<button class="account-balance-btn" type="button">余额</button>' : ''}
-    </div>
+      data-group="${escapeAttr(account.group || account.provider)}"
+      type="button">
+      <span class="provider-badge">${escapeHtml(account.provider)}</span>
+      <span>${escapeHtml(account.account)}</span>
+    </button>
   `).join('');
 }
 
-async function fetchAccountBalance(account) {
-  els.accountBalance.innerHTML = '<div class="empty-state compact">正在查询 Azure 余额...</div>';
-
-  try {
-    const data = await fetchJSON(`/api/account/${encodeURIComponent(account.provider)}/${encodeURIComponent(account.account)}/balance`);
-    renderAccountBalance(data);
-    addLog(`已查询 ${account.provider}/${account.account} 余额。`, 'success');
-  } catch (error) {
-    els.accountBalance.innerHTML = `<div class="empty-state compact error">查询失败：${escapeHtml(error.message)}</div>`;
-    addLog(`余额查询失败：${error.message}`, 'error');
+function renderSidebarAccounts(accounts) {
+  if (!els.sidebarAccountsMenu) return;
+  if (accounts.length === 0) {
+    els.sidebarAccountsMenu.innerHTML = '';
+    return;
   }
-}
 
-function renderAccountBalance(data) {
-  const total = Number(data.total || 0);
-  els.accountBalance.innerHTML = `
-    <div class="balance-summary">
-      <span>${escapeHtml((data.provider || '').toUpperCase())} / ${escapeHtml(data.account || '')}</span>
-      <strong>${total.toFixed(2)} ${escapeHtml(data.currency || '')}</strong>
-      ${data.note ? `<p>${escapeHtml(data.note)}</p>` : ''}
+  const groups = {};
+  accounts.forEach(account => {
+    const groupName = account.group || account.provider;
+    if (!groups[groupName]) {
+      groups[groupName] = [];
+    }
+    groups[groupName].push(account);
+  });
+
+  els.sidebarAccountsMenu.innerHTML = Object.entries(groups).map(([groupName, groupAccounts]) => `
+    <div class="sub-nav-group collapsed">
+      <div class="sub-nav-group-title">
+        <span class="sub-nav-group-title-content">
+          <i class="bi bi-folder2-open"></i>
+          <span>${escapeHtml(groupName)}</span>
+        </span>
+        <span class="sub-nav-toggle"><i class="bi bi-plus-lg"></i></span>
+      </div>
+      <div class="sub-nav-group-items" style="display: none;">
+        ${groupAccounts.map(account => `
+          <a class="sub-nav-account-item"
+            data-provider="${escapeAttr(account.provider)}"
+            data-account="${escapeAttr(account.account)}"
+            data-group="${escapeAttr(account.group || account.provider)}">
+            <i class="bi bi-cloud"></i>
+            <span>${escapeHtml(account.account)}</span>
+          </a>
+        `).join('')}
+      </div>
     </div>
-  `;
+  `).join('');
 }
 
 async function loadAccount(account) {
   selectedAccount = account;
   els.selectedAccount.textContent = `${account.provider} / ${account.account}`;
-  els.accountBalance.innerHTML = account.provider === 'azure'
-    ? '<div class="empty-state compact">点击账号右侧“余额”按钮查询。</div>'
-    : '<div class="empty-state compact">当前云厂商未配置余额查询。</div>';
 
-  document.querySelectorAll('.account-card').forEach(card => {
-    card.classList.toggle('active', card.dataset.provider === account.provider && card.dataset.account === account.account);
+  document.querySelectorAll('.account-pill, .sub-nav-account-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.provider === account.provider && el.dataset.account === account.account);
   });
+  updateDTMonitorVisibility();
   await fetchVMs();
 }
 
@@ -691,6 +745,142 @@ function escapeHtml(value) {
 function escapeAttr(value) {
   return escapeHtml(value);
 }
+
+// ==================== OCI Data Transfer Monitoring ====================
+
+function updateDTMonitorVisibility() {
+  const panel = document.getElementById('dt-monitor-panel');
+  if (!panel) return;
+  if (selectedAccount && selectedAccount.provider === 'oci') {
+    panel.hidden = false;
+    document.getElementById('dt-monitor-account-label').textContent = selectedAccount.account;
+    loadDTMonitorStatus();
+  } else {
+    panel.hidden = true;
+  }
+}
+
+async function loadDTMonitorStatus() {
+  if (!selectedAccount || selectedAccount.provider !== 'oci') return;
+  try {
+    const data = await fetchJSON(`/api/oci/${encodeURIComponent(selectedAccount.account)}/data-transfer/status`);
+    updateDTDisplay(data);
+  } catch (error) {
+    addLog(`加载数据传输监控状态失败：${error.message}`, 'error');
+  }
+}
+
+function updateDTDisplay(data) {
+  const result = data.lastResult;
+  const config = data.config || {};
+
+  // Update stats
+  if (result && !result.error) {
+    document.getElementById('dt-usage-value').textContent = `${result.usageGB.toFixed(2)} GB`;
+    document.getElementById('dt-threshold-value').textContent = `${result.threshold.toFixed(0)} GB`;
+    const pct = Math.min(result.percentage, 100);
+    document.getElementById('dt-percentage-value').textContent = `${result.percentage.toFixed(1)}%`;
+    const progressFill = document.getElementById('dt-progress-fill');
+    progressFill.style.width = `${pct}%`;
+    progressFill.className = 'dt-progress-fill' + (result.percentage > 90 ? ' danger' : result.percentage > 70 ? ' warning' : '');
+
+    if (result.queryTime) {
+      const t = new Date(result.queryTime);
+      document.getElementById('dt-last-update').textContent = `最后更新：${t.toLocaleString('zh-CN')}`;
+    }
+  } else if (result && result.error) {
+    document.getElementById('dt-usage-value').textContent = '查询失败';
+    document.getElementById('dt-last-update').textContent = `错误：${result.error}`;
+  }
+
+  // Update monitor status badge
+  const statusBadge = document.getElementById('dt-monitor-status');
+  if (data.running) {
+    statusBadge.textContent = '运行中';
+    statusBadge.className = 'dt-monitor-status-badge on';
+  } else {
+    statusBadge.textContent = config.enabled ? '已停止' : '未启用';
+    statusBadge.className = 'dt-monitor-status-badge off';
+  }
+
+  // Update settings form
+  document.getElementById('dt-enabled').checked = Boolean(config.enabled);
+  document.getElementById('dt-interval').value = config.interval || 300;
+  document.getElementById('dt-threshold-input').value = config.threshold || 9000;
+  document.getElementById('dt-auto-stop').checked = Boolean(config.autoStop);
+  document.getElementById('dt-stop-method').value = config.stopMethod || 'soft';
+}
+
+async function fetchDTManual() {
+  if (!selectedAccount || selectedAccount.provider !== 'oci') return;
+  const btn = document.getElementById('dt-fetch-btn');
+  btn.disabled = true;
+  btn.innerHTML = '<i class="bi bi-hourglass-split"></i> 查询中...';
+  addLog(`正在查询 OCI 账号 ${selectedAccount.account} 的数据传输用量...`, 'info');
+
+  try {
+    const result = await fetchJSON(`/api/oci/${encodeURIComponent(selectedAccount.account)}/data-transfer`);
+    if (result.error) {
+      addLog(`数据传输查询失败：${result.error}`, 'error');
+    } else {
+      addLog(`OCI ${selectedAccount.account} 当月数据传输：${result.usageGB.toFixed(2)} GB / ${result.threshold.toFixed(0)} GB (${result.percentage.toFixed(1)}%)`, 'success');
+    }
+    loadDTMonitorStatus();
+  } catch (error) {
+    addLog(`数据传输查询失败：${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '<i class="bi bi-arrow-clockwise"></i> 手动获取';
+  }
+}
+
+function toggleDTSettings() {
+  const panel = document.getElementById('dt-settings-panel');
+  panel.hidden = !panel.hidden;
+}
+
+async function saveDTConfig() {
+  if (!selectedAccount || selectedAccount.provider !== 'oci') return;
+  const msgEl = document.getElementById('dt-config-message');
+  msgEl.textContent = '保存中...';
+  msgEl.className = 'form-message';
+
+  const autoStop = document.getElementById('dt-auto-stop').checked;
+  if (autoStop && !confirm('⚠️ 你确定要启用"超阈值自动停机"功能吗？\n\n当数据传输用量超过阈值时，系统将自动停止该账号下所有正在运行的实例。')) {
+    msgEl.textContent = '已取消。';
+    msgEl.className = 'form-message';
+    return;
+  }
+
+  const payload = {
+    enabled: document.getElementById('dt-enabled').checked,
+    interval: Math.max(60, Number(document.getElementById('dt-interval').value) || 300),
+    threshold: Math.max(1, Number(document.getElementById('dt-threshold-input').value) || 9000),
+    autoStop: autoStop,
+    stopMethod: document.getElementById('dt-stop-method').value || 'soft'
+  };
+
+  try {
+    await fetchJSON(`/api/oci/${encodeURIComponent(selectedAccount.account)}/data-transfer/config`, {
+      method: 'POST',
+      body: payload
+    });
+    msgEl.textContent = '监控配置已保存。';
+    msgEl.className = 'form-message success';
+    addLog(`OCI ${selectedAccount.account} 数据传输监控配置已保存。`, 'success');
+    loadDTMonitorStatus();
+  } catch (error) {
+    msgEl.textContent = error.message;
+    msgEl.className = 'form-message error';
+  }
+}
+
+// Bind DT monitor events
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('dt-fetch-btn')?.addEventListener('click', fetchDTManual);
+  document.getElementById('dt-settings-toggle')?.addEventListener('click', toggleDTSettings);
+  document.getElementById('dt-save-config-btn')?.addEventListener('click', saveDTConfig);
+});
 
 // ==================== DNS Management Page ====================
 
