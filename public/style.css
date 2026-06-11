@@ -264,9 +264,7 @@ button {
   gap: 32px;
   flex: 1;
   padding: 32px;
-  max-width: 1440px;
   width: 100%;
-  margin: 0 auto;
 }
 
 .sidebar {
@@ -310,7 +308,7 @@ button {
 .nav-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-start;
   gap: 12px;
   height: 44px;
   padding: 0 16px;
@@ -687,6 +685,10 @@ button {
   padding-left: 20px;
 }
 
+.nav-toggle {
+  margin-left: auto;
+}
+
 .nav-toggle, .sub-nav-toggle {
   display: inline-flex;
   align-items: center;
@@ -914,7 +916,7 @@ button {
   font-size: 18px;
   line-height: 1.25;
   font-family: 'Outfit', sans-serif;
-  color: #fff;
+  color: var(--text);
   font-weight: 700;
 }
 
@@ -1121,6 +1123,25 @@ button {
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--muted);
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s;
+}
+
+.log-header:hover {
+  background-color: var(--panel-soft);
+}
+
+.log-panel.collapsed .logs-container {
+  display: none !important;
+}
+
+.log-panel.collapsed #clear-log-btn {
+  display: none !important;
+}
+
+.log-panel.collapsed .log-header {
+  border-bottom: none;
 }
 
 .logs-container {
@@ -1464,7 +1485,7 @@ button {
 .dns-binding-info strong {
   font-size: 14px;
   overflow-wrap: anywhere;
-  color: #fff;
+  color: var(--text);
 }
 
 .dns-binding-info span {
@@ -1597,7 +1618,7 @@ button {
 
 .sg-rule-meta strong {
   font-size: 13.5px;
-  color: #fff;
+  color: var(--text);
 }
 
 .sg-rule-meta span {
