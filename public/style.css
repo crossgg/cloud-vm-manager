@@ -218,6 +218,7 @@ button {
   line-height: 1.25;
   background: linear-gradient(to right, var(--text), var(--muted));
   -webkit-background-clip: text;
+  background-clip: text;
   -webkit-text-fill-color: transparent;
 }
 
