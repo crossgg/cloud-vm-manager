@@ -1454,9 +1454,9 @@ function securityListRuleRowHtml(rule = {}, index = 0) {
   const endpointLabel = securityListModalDirection === 'egress' ? '目标 CIDR' : '来源 CIDR';
   const endpointTypeLabel = securityListModalDirection === 'egress' ? '目标类型' : '来源类型';
   const protocolOption = SECURITY_PROTOCOL_OPTIONS.find(option =>
-    option.value === protocol && option.minPort == minPort && option.maxPort == maxPort
+    option.value === protocol && (option.minPort ?? '') === minPort && (option.maxPort ?? '') === maxPort
   );
-  const protocolSelectValue = protocolOption ? securityProtocolOptionValue(protocolOption) : protocol;
+  const protocolSelectValue = protocolOption ? securityProtocolOptionValue(protocolOption) : securityProtocolOptionValue({value: protocol});
 
   return `<div class="sg-rule-row" data-rule-id="${escapeAttr(rule.id || '')}">
     <div class="sg-rule-meta">
