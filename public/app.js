@@ -1059,7 +1059,7 @@ function maskDomain(domain) {
   if (!domain) return '';
   const parts = domain.split('.');
   if (parts.length <= 1) return domain;
-  return parts[0] + parts.slice(1).map(() => '**').join('.');
+  return parts[0] + '.' + parts.slice(1).map(() => '**').join('.');
 }
 
 function maskRawDNSConfig(rawText) {
@@ -1454,7 +1454,7 @@ function securityListRuleRowHtml(rule = {}, index = 0) {
   const endpointLabel = securityListModalDirection === 'egress' ? '目标 CIDR' : '来源 CIDR';
   const endpointTypeLabel = securityListModalDirection === 'egress' ? '目标类型' : '来源类型';
   const protocolOption = SECURITY_PROTOCOL_OPTIONS.find(option =>
-    option.value === protocol && option.minPort === minPort && option.maxPort === maxPort
+    option.value === protocol && option.minPort == minPort && option.maxPort == maxPort
   );
   const protocolSelectValue = protocolOption ? securityProtocolOptionValue(protocolOption) : protocol;
 
