@@ -61,6 +61,10 @@
             <i class="bi bi-globe"></i>
             <span>DNS 管理</span>
           </a>
+          <a href="#" class="nav-item" data-section="gcp-firewall" id="nav-gcp-firewall-btn">
+            <i class="bi bi-shield-lock"></i>
+            <span>GCP 防火墙</span>
+          </a>
           <a href="#" class="nav-item" data-section="settings">
             <i class="bi bi-sliders"></i>
             <span>系统设置</span>
@@ -79,22 +83,31 @@
           <div class="section-title">
             <div>
               <h2>运行概览</h2>
-              <p>统计仅来自当前手动加载的账号。</p>
+              <p id="overview-subtitle">统计来自后端持久化缓存，可在实例管理中手动加载指定账号以更新最新状态。</p>
             </div>
+            <button id="overview-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新统计</button>
           </div>
 
           <div class="overview-grid">
             <div class="stat-card">
-              <span class="stat-label">已加载实例</span>
+              <span class="stat-label">配置数量</span>
+              <strong id="config-count">0</strong>
+              <small id="config-meta" class="stat-meta">读取中...</small>
+            </div>
+            <div class="stat-card">
+              <span class="stat-label">实例数量</span>
               <strong id="vm-count">0</strong>
+              <small id="instance-meta" class="stat-meta">已缓存 0 个账号</small>
             </div>
             <div class="stat-card running">
               <span class="stat-label">运行中</span>
               <strong id="running-count">0</strong>
+              <small id="running-meta" class="stat-meta">正常提供服务</small>
             </div>
             <div class="stat-card stopped">
               <span class="stat-label">已停止</span>
               <strong id="stopped-count">0</strong>
+              <small id="stopped-meta" class="stat-meta">已关机或释放</small>
             </div>
           </div>
         </section>
@@ -348,6 +361,34 @@
           </div>
         </section>
 
+        <!-- GCP Firewall Management Section -->
+        <section id="gcp-firewall-section" class="section">
+          <div class="section-title">
+            <div>
+              <h2>GCP 防火墙管理</h2>
+              <p>管理 Google Cloud VPC 全局防火墙规则（入站/出站端口放行与拦截）。</p>
+            </div>
+            <div style="display: flex; gap: 10px;">
+              <button id="gcp-fw-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新规则</button>
+              <button id="gcp-fw-create-btn" class="primary-btn" type="button"><i class="bi bi-plus-lg"></i> 新建防火墙规则</button>
+            </div>
+          </div>
+
+          <div class="settings-panel">
+            <div class="panel-heading" style="align-items: flex-end; justify-content: flex-start; gap: 20px; flex-wrap: wrap;">
+              <div class="field compact" style="max-width: 320px; margin-bottom: 0;">
+                <span>选择 GCP 账号</span>
+                <select id="gcp-fw-account-select"></select>
+              </div>
+              <div id="gcp-fw-account-meta" style="color: var(--muted); font-size: 13px; padding-bottom: 4px;"></div>
+            </div>
+
+            <div id="gcp-fw-table-container" class="gcp-fw-table-container">
+              <div class="empty-state compact">正在读取 GCP 账号配置...</div>
+            </div>
+          </div>
+        </section>
+
         <section id="settings-section" class="section">
           <div class="section-title">
             <div>
@@ -541,6 +582,101 @@
         <button id="sg-modal-save" class="primary-btn" type="button">保存安全规则</button>
       </div>
       <div id="sg-modal-message" class="form-message"></div>
+    </div>
+  </div>
+
+  <!-- GCP Firewall Rule Modal -->
+  <div id="gcp-firewall-modal" class="modal-overlay" hidden>
+    <div class="modal-panel gcp-fw-modal-panel">
+      <div class="modal-header">
+        <h3 id="gcp-fw-modal-title">新建 GCP 防火墙规则</h3>
+        <button id="gcp-fw-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <form id="gcp-fw-form">
+        <input type="hidden" id="gcp-fw-edit-mode" value="create">
+        <div class="modal-body">
+          <div class="form-grid">
+            <label class="field">
+              <span>规则名称 <small style="color: var(--muted);">(小写字母、数字、连字符)</small></span>
+              <input id="gcp-fw-name" type="text" required placeholder="例如 allow-web-8080" pattern="[a-z]([-a-z0-9]{0,61}[a-z0-9])?">
+            </label>
+            <label class="field">
+              <span>优先级 <small style="color: var(--muted);">(0-65535，默认 1000)</small></span>
+              <input id="gcp-fw-priority" type="number" min="0" max="65535" value="1000" required>
+            </label>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>流量方向</span>
+              <select id="gcp-fw-direction">
+                <option value="INGRESS" selected>INGRESS (入站)</option>
+                <option value="EGRESS">EGRESS (出站)</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>执行动作</span>
+              <select id="gcp-fw-action">
+                <option value="ALLOW" selected>ALLOW (允许放行)</option>
+                <option value="DENY">DENY (拒绝拦截)</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="form-grid">
+            <label class="field">
+              <span>协议类型</span>
+              <select id="gcp-fw-protocol">
+                <option value="tcp" selected>TCP</option>
+                <option value="udp">UDP</option>
+                <option value="icmp">ICMP (Ping)</option>
+                <option value="all">全部协议 (All)</option>
+              </select>
+            </label>
+            <label class="field" id="gcp-fw-ports-group">
+              <span>端口号 <small style="color: var(--muted);">(逗号分隔或范围，如 80, 443, 8080-8090)</small></span>
+              <input id="gcp-fw-ports" type="text" placeholder="例如 80, 443, 8080-8090">
+            </label>
+          </div>
+
+          <div class="quick-port-chips" id="gcp-quick-ports">
+            <span class="chip-label">快捷端口：</span>
+            <button type="button" class="port-chip" data-port="22">SSH (22)</button>
+            <button type="button" class="port-chip" data-port="80">HTTP (80)</button>
+            <button type="button" class="port-chip" data-port="443">HTTPS (443)</button>
+            <button type="button" class="port-chip" data-port="80, 443">Web (80,443)</button>
+            <button type="button" class="port-chip" data-port="3389">RDP (3389)</button>
+            <button type="button" class="port-chip" data-port="3306">MySQL (3306)</button>
+            <button type="button" class="port-chip" data-port="5432">PostgreSQL (5432)</button>
+          </div>
+
+          <label class="field" style="margin-top: 10px;">
+            <span id="gcp-fw-ip-label">来源 IP 网段 <small style="color: var(--muted);">(默认 0.0.0.0/0)</small></span>
+            <input id="gcp-fw-ip-ranges" type="text" placeholder="0.0.0.0/0">
+          </label>
+
+          <label class="field">
+            <span>目标网络标记 (Target Tags) <small style="color: var(--muted);">(选填，留空则对该网络所有机器生效)</small></span>
+            <input id="gcp-fw-target-tags" type="text" placeholder="例如 http-server, web-prod (逗号分隔)">
+          </label>
+
+          <label class="field">
+            <span>说明描述 <small style="color: var(--muted);">(选填)</small></span>
+            <input id="gcp-fw-description" type="text" placeholder="例如 放行 Web 流量">
+          </label>
+
+          <label class="switch-row inline" style="margin-top: 10px;">
+            <input id="gcp-fw-disabled" type="checkbox">
+            <span>禁用此规则 (创建后暂不生效)</span>
+          </label>
+
+          <div id="gcp-fw-modal-message" class="form-message"></div>
+        </div>
+        <div class="modal-footer">
+          <button id="gcp-fw-modal-cancel" class="secondary-btn" type="button">取消</button>
+          <button id="gcp-fw-modal-submit" class="primary-btn" type="submit">保存规则</button>
+        </div>
+      </form>
     </div>
   </div>
 

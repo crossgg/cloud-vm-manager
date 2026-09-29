@@ -23,11 +23,13 @@ func main() {
 		fmt.Printf("runtime init failed: %v\n", err)
 		return
 	}
+	InitVMCache(configPath)
 
 	r := gin.Default()
 	authService.Register(r)
 	r.Use(authService.Middleware())
 
+	r.GET("/api/overview", getOverview)
 	r.GET("/api/config/status", getConfigStatus)
 	r.POST("/api/config/reload", reloadConfig)
 	r.GET("/api/update/status", getUpdateStatus)
@@ -60,6 +62,13 @@ func main() {
 	r.POST("/api/vm/:provider/:account/:name/network-security-groups", createOCINetworkSecurityGroup)
 	r.POST("/api/vm/:provider/:account/:name/network-security-groups/:groupID/rules", saveOCINetworkSecurityGroupRules)
 
+	// GCP firewall management APIs
+	r.GET("/api/gcp/:account/firewalls", listGCPFirewalls)
+	r.POST("/api/gcp/:account/firewalls", createGCPFirewall)
+	r.PUT("/api/gcp/:account/firewalls/:name", updateGCPFirewall)
+	r.PATCH("/api/gcp/:account/firewalls/:name/toggle", toggleGCPFirewall)
+	r.DELETE("/api/gcp/:account/firewalls/:name", deleteGCPFirewall)
+
 	// OCI data transfer monitoring APIs
 	r.GET("/api/oci/:account/data-transfer", getOCIDataTransfer)
 	r.GET("/api/oci/:account/data-transfer/config", getDataTransferConfig)
@@ -84,6 +93,20 @@ func main() {
 	initDTMonitors()
 
 	_ = r.Run(":3000")
+}
+
+func getOverview(c *gin.Context) {
+	if globalVMCache == nil {
+		c.JSON(http.StatusOK, gin.H{
+			"configCount":        len(cloudAccountsSnapshot()),
+			"instanceCount":      0,
+			"runningCount":       0,
+			"stoppedCount":       0,
+			"cachedAccountCount": 0,
+		})
+		return
+	}
+	c.JSON(http.StatusOK, globalVMCache.GetOverview(cloudAccountsSnapshot()))
 }
 
 func listAccounts(c *gin.Context) {
@@ -113,6 +136,18 @@ func listVMs(c *gin.Context) {
 		if id, ok := vm["id"].(string); ok {
 			vm["dnsEnabled"] = cloudflare.HasBinding(provider, account, id)
 		}
+	}
+	if globalVMCache != nil {
+		group := ""
+		for _, acc := range cloudAccountsSnapshot() {
+			if acc["provider"] == provider && acc["account"] == account {
+				if g, ok := acc["group"].(string); ok {
+					group = g
+				}
+				break
+			}
+		}
+		globalVMCache.UpdateAccount(provider, account, group, vms)
 	}
 	c.JSON(http.StatusOK, vms)
 }

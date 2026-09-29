@@ -2494,3 +2494,154 @@ button {
     justify-content: start;
   }
 }
+
+/* Stat card meta subtitle */
+.stat-meta {
+  display: block;
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* GCP Firewall Management Styles */
+.gcp-fw-table-container {
+  overflow-x: auto;
+  margin-top: 16px;
+}
+
+.gcp-fw-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  text-align: left;
+}
+
+.gcp-fw-table th,
+.gcp-fw-table td {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--panel-border);
+  vertical-align: middle;
+}
+
+.gcp-fw-table th {
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--panel-soft);
+  white-space: nowrap;
+}
+
+.gcp-fw-table tr:hover td {
+  background: var(--panel-soft);
+}
+
+.fw-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+.fw-badge-allow {
+  background: rgba(34, 197, 94, 0.15);
+  color: var(--green);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+}
+
+.fw-badge-deny {
+  background: rgba(239, 68, 68, 0.15);
+  color: var(--red);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+}
+
+.fw-badge-ingress {
+  background: rgba(59, 130, 246, 0.15);
+  color: #3b82f6;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.fw-badge-egress {
+  background: rgba(168, 85, 247, 0.15);
+  color: #a855f7;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.fw-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.fw-status-badge.enabled {
+  color: var(--green);
+}
+
+.fw-status-badge.disabled {
+  color: var(--muted);
+}
+
+.fw-tag-pill {
+  display: inline-block;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: var(--chip-bg, rgba(255, 255, 255, 0.08));
+  border: 1px solid var(--panel-border);
+  font-size: 11px;
+  margin: 2px;
+  font-family: monospace;
+}
+
+.fw-actions-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+/* Quick port chips */
+.quick-port-chips {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.quick-port-chips .chip-label {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.port-chip {
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  background: var(--panel-soft);
+  color: var(--text);
+  border: 1px solid var(--panel-border);
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.port-chip:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(59, 130, 246, 0.1);
+}
+
+.gcp-fw-modal-panel {
+  max-width: 680px;
+  width: 95%;
+}
+

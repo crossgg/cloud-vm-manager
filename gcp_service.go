@@ -540,3 +540,211 @@ func stringValue(value interface{}) string {
 	}
 	return ""
 }
+
+type GCPFirewallRule struct {
+	ID                string   `json:"id,omitempty"`
+	CreationTimestamp string   `json:"creationTimestamp,omitempty"`
+	Name              string   `json:"name"`
+	Description       string   `json:"description,omitempty"`
+	Network           string   `json:"network,omitempty"`
+	Priority          int      `json:"priority,omitempty"`
+	Direction         string   `json:"direction,omitempty"` // INGRESS or EGRESS
+	Action            string   `json:"action,omitempty"`    // ALLOW or DENY
+	SourceRanges      []string `json:"sourceRanges,omitempty"`
+	DestinationRanges []string `json:"destinationRanges,omitempty"`
+	SourceTags        []string `json:"sourceTags,omitempty"`
+	TargetTags        []string `json:"targetTags,omitempty"`
+	IPProtocol        string   `json:"ipProtocol,omitempty"`
+	Ports             []string `json:"ports,omitempty"`
+	Disabled          bool     `json:"disabled"`
+}
+
+func (g *GCPService) ListFirewalls() ([]GCPFirewallRule, error) {
+	var result struct {
+		Items []map[string]interface{} `json:"items"`
+	}
+	endpoint := fmt.Sprintf("%s/projects/%s/global/firewalls", gcpComputeBaseURL, url.PathEscape(g.account.ProjectID))
+	if err := g.requestJSON("GET", endpoint, nil, &result); err != nil {
+		return nil, err
+	}
+
+	rules := make([]GCPFirewallRule, 0, len(result.Items))
+	for _, item := range result.Items {
+		rules = append(rules, g.normalizeFirewallRule(item))
+	}
+	return rules, nil
+}
+
+func (g *GCPService) normalizeFirewallRule(item map[string]interface{}) GCPFirewallRule {
+	rule := GCPFirewallRule{
+		ID:                stringValue(item["id"]),
+		CreationTimestamp: stringValue(item["creationTimestamp"]),
+		Name:              stringValue(item["name"]),
+		Description:       stringValue(item["description"]),
+		Network:           resourceTail(stringValue(item["network"])),
+		Direction:         stringValue(item["direction"]),
+	}
+	if p, ok := item["priority"].(float64); ok {
+		rule.Priority = int(p)
+	}
+	if d, ok := item["disabled"].(bool); ok {
+		rule.Disabled = d
+	}
+	if rule.Direction == "" {
+		rule.Direction = "INGRESS"
+	}
+
+	rule.SourceRanges = toStringSlice(item["sourceRanges"])
+	rule.DestinationRanges = toStringSlice(item["destinationRanges"])
+	rule.SourceTags = toStringSlice(item["sourceTags"])
+	rule.TargetTags = toStringSlice(item["targetTags"])
+
+	if allowedList, ok := item["allowed"].([]interface{}); ok && len(allowedList) > 0 {
+		rule.Action = "ALLOW"
+		rule.IPProtocol, rule.Ports = parseProtocolAndPorts(allowedList)
+	} else if deniedList, ok := item["denied"].([]interface{}); ok && len(deniedList) > 0 {
+		rule.Action = "DENY"
+		rule.IPProtocol, rule.Ports = parseProtocolAndPorts(deniedList)
+	} else {
+		rule.Action = "ALLOW"
+		rule.IPProtocol = "all"
+	}
+
+	return rule
+}
+
+func parseProtocolAndPorts(list []interface{}) (string, []string) {
+	protocols := make([]string, 0)
+	ports := make([]string, 0)
+	for _, entry := range list {
+		if m, ok := entry.(map[string]interface{}); ok {
+			proto := stringValue(m["IPProtocol"])
+			if proto != "" {
+				protocols = append(protocols, proto)
+			}
+			ports = append(ports, toStringSlice(m["ports"])...)
+		}
+	}
+	protoStr := strings.Join(protocols, ",")
+	if protoStr == "" {
+		protoStr = "tcp"
+	}
+	return protoStr, ports
+}
+
+func (g *GCPService) buildFirewallPayload(rule GCPFirewallRule) map[string]interface{} {
+	priority := rule.Priority
+	if priority <= 0 {
+		priority = 1000
+	}
+	direction := strings.ToUpper(strings.TrimSpace(rule.Direction))
+	if direction == "" {
+		direction = "INGRESS"
+	}
+
+	network := rule.Network
+	if network == "" || network == "default" {
+		network = fmt.Sprintf("projects/%s/global/networks/default", g.account.ProjectID)
+	} else if !strings.HasPrefix(network, "projects/") && !strings.HasPrefix(network, "global/") {
+		network = fmt.Sprintf("projects/%s/global/networks/%s", g.account.ProjectID, network)
+	}
+
+	payload := map[string]interface{}{
+		"name":        strings.TrimSpace(rule.Name),
+		"description": rule.Description,
+		"priority":    priority,
+		"direction":   direction,
+		"network":     network,
+		"disabled":    rule.Disabled,
+	}
+
+	if len(rule.TargetTags) > 0 {
+		payload["targetTags"] = rule.TargetTags
+	}
+
+	if direction == "INGRESS" {
+		if len(rule.SourceRanges) > 0 {
+			payload["sourceRanges"] = rule.SourceRanges
+		} else {
+			payload["sourceRanges"] = []string{"0.0.0.0/0"}
+		}
+	} else {
+		if len(rule.DestinationRanges) > 0 {
+			payload["destinationRanges"] = rule.DestinationRanges
+		} else {
+			payload["destinationRanges"] = []string{"0.0.0.0/0"}
+		}
+	}
+
+	proto := strings.ToLower(strings.TrimSpace(rule.IPProtocol))
+	if proto == "" {
+		proto = "tcp"
+	}
+
+	var protoEntry map[string]interface{}
+	if proto == "all" {
+		protoEntry = map[string]interface{}{
+			"IPProtocol": "all",
+		}
+	} else {
+		protoEntry = map[string]interface{}{
+			"IPProtocol": proto,
+		}
+		if len(rule.Ports) > 0 && proto != "icmp" && proto != "esp" && proto != "ah" {
+			protoEntry["ports"] = rule.Ports
+		}
+	}
+
+	if strings.ToUpper(strings.TrimSpace(rule.Action)) == "DENY" {
+		payload["denied"] = []map[string]interface{}{protoEntry}
+	} else {
+		payload["allowed"] = []map[string]interface{}{protoEntry}
+	}
+
+	return payload
+}
+
+func (g *GCPService) CreateFirewall(rule GCPFirewallRule) error {
+	endpoint := fmt.Sprintf("%s/projects/%s/global/firewalls", gcpComputeBaseURL, url.PathEscape(g.account.ProjectID))
+	payload := g.buildFirewallPayload(rule)
+	return g.requestOperation("POST", endpoint, payload)
+}
+
+func (g *GCPService) UpdateFirewall(name string, rule GCPFirewallRule) error {
+	endpoint := fmt.Sprintf("%s/projects/%s/global/firewalls/%s", gcpComputeBaseURL, url.PathEscape(g.account.ProjectID), url.PathEscape(name))
+	payload := g.buildFirewallPayload(rule)
+	return g.requestOperation("PATCH", endpoint, payload)
+}
+
+func (g *GCPService) ToggleFirewall(name string, disabled bool) error {
+	endpoint := fmt.Sprintf("%s/projects/%s/global/firewalls/%s", gcpComputeBaseURL, url.PathEscape(g.account.ProjectID), url.PathEscape(name))
+	payload := map[string]interface{}{
+		"disabled": disabled,
+	}
+	return g.requestOperation("PATCH", endpoint, payload)
+}
+
+func (g *GCPService) DeleteFirewall(name string) error {
+	endpoint := fmt.Sprintf("%s/projects/%s/global/firewalls/%s", gcpComputeBaseURL, url.PathEscape(g.account.ProjectID), url.PathEscape(name))
+	return g.requestOperation("DELETE", endpoint, nil)
+}
+
+func toStringSlice(val interface{}) []string {
+	if val == nil {
+		return []string{}
+	}
+	if arr, ok := val.([]interface{}); ok {
+		res := make([]string, 0, len(arr))
+		for _, item := range arr {
+			if s, ok := item.(string); ok && strings.TrimSpace(s) != "" {
+				res = append(res, strings.TrimSpace(s))
+			}
+		}
+		return res
+	}
+	if arr, ok := val.([]string); ok {
+		return arr
+	}
+	return []string{}
+}
+
