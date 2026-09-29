@@ -9,8 +9,16 @@ let proxyAccounts = [];
 
 const els = {};
 
+let firewallAccounts = [];
+let selectedFirewallAccount = null; // { provider, account, group }
 let currentGCPFirewalls = [];
-let selectedGCPFirewallAccount = null;
+let currentOciSecurityLists = [];
+let currentAzureNSGs = [];
+let currentAzureNSG = null;
+let azureNSGDirection = 'Inbound';
+let currentOciAccountSL = null;
+let ociAccountSLDirection = 'ingress';
+let ociAccountSLData = { ingress: [], egress: [] };
 
 document.addEventListener('DOMContentLoaded', () => {
   cacheElements();
@@ -38,11 +46,17 @@ function cacheElements() {
     stoppedCount: document.getElementById('stopped-count'),
     stoppedMeta: document.getElementById('stopped-meta'),
     overviewRefreshBtn: document.getElementById('overview-refresh-btn'),
-    gcpFwAccountSelect: document.getElementById('gcp-fw-account-select'),
-    gcpFwAccountMeta: document.getElementById('gcp-fw-account-meta'),
-    gcpFwRefreshBtn: document.getElementById('gcp-fw-refresh-btn'),
-    gcpFwCreateBtn: document.getElementById('gcp-fw-create-btn'),
-    gcpFwTableContainer: document.getElementById('gcp-fw-table-container'),
+
+    // Multi-Cloud Firewall Management Elements
+    fwRefreshBtn: document.getElementById('fw-refresh-btn'),
+    fwCreateBtn: document.getElementById('fw-create-btn'),
+    fwCreateBtnLabel: document.getElementById('fw-create-btn-label'),
+    fwAccountPills: document.getElementById('fw-account-pills'),
+    fwAccountSelect: document.getElementById('fw-account-select'),
+    fwAccountMeta: document.getElementById('fw-account-meta'),
+    fwContentContainer: document.getElementById('fw-content-container'),
+
+    // GCP Firewall Modal
     gcpFwModal: document.getElementById('gcp-firewall-modal'),
     gcpFwForm: document.getElementById('gcp-fw-form'),
     gcpFwModalTitle: document.getElementById('gcp-fw-modal-title'),
@@ -62,6 +76,38 @@ function cacheElements() {
     gcpFwDescription: document.getElementById('gcp-fw-description'),
     gcpFwDisabled: document.getElementById('gcp-fw-disabled'),
     gcpFwEditMode: document.getElementById('gcp-fw-edit-mode'),
+
+    // Azure NSG Modal
+    azureNsgModal: document.getElementById('azure-nsg-modal'),
+    azureNsgModalTitle: document.getElementById('azure-nsg-modal-title'),
+    azureNsgModalClose: document.getElementById('azure-nsg-modal-close'),
+    azureNsgTabInbound: document.getElementById('azure-nsg-tab-inbound'),
+    azureNsgTabOutbound: document.getElementById('azure-nsg-tab-outbound'),
+    azureNsgAddRuleBtn: document.getElementById('azure-nsg-add-rule-btn'),
+    azureNsgAddForm: document.getElementById('azure-nsg-add-form'),
+    azureNsgRulesContainer: document.getElementById('azure-nsg-rules-container'),
+    azureNsgModalDone: document.getElementById('azure-nsg-modal-done'),
+    azRuleName: document.getElementById('az-rule-name'),
+    azRulePriority: document.getElementById('az-rule-priority'),
+    azRuleAccess: document.getElementById('az-rule-access'),
+    azRuleProtocol: document.getElementById('az-rule-protocol'),
+    azRuleSourceIp: document.getElementById('az-rule-source-ip'),
+    azRuleDestPort: document.getElementById('az-rule-dest-port'),
+    azRuleDesc: document.getElementById('az-rule-desc'),
+    azRuleCancelBtn: document.getElementById('az-rule-cancel-btn'),
+    azureNsgFormMsg: document.getElementById('azure-nsg-form-msg'),
+
+    // OCI Account Security List Modal
+    ociAccSlModal: document.getElementById('oci-account-sl-modal'),
+    ociAccSlModalTitle: document.getElementById('oci-acc-sl-modal-title'),
+    ociAccSlModalClose: document.getElementById('oci-acc-sl-modal-close'),
+    ociAccSlTabIngress: document.getElementById('oci-acc-sl-tab-ingress'),
+    ociAccSlTabEgress: document.getElementById('oci-acc-sl-tab-egress'),
+    ociAccSlModalBody: document.getElementById('oci-acc-sl-modal-body'),
+    ociAccSlAdd: document.getElementById('oci-acc-sl-add'),
+    ociAccSlSave: document.getElementById('oci-acc-sl-save'),
+    ociAccSlMsg: document.getElementById('oci-acc-sl-message'),
+
     logs: document.getElementById('logs'),
     authForm: document.getElementById('auth-settings-form'),
     authEnabled: document.getElementById('auth-enabled'),
@@ -106,9 +152,11 @@ function bindNavigation() {
       if (section === 'proxies') {
         loadProxyPage();
       }
-      if (section === 'gcp-firewall') {
-        if (currentGCPFirewalls.length === 0) {
-          fetchGCPFirewalls();
+      if (section === 'firewall' || section === 'gcp-firewall') {
+        if (!selectedFirewallAccount) {
+          initFirewallSection();
+        } else {
+          fetchCurrentFirewalls();
         }
       }
     });
@@ -139,10 +187,16 @@ function bindActions() {
   document.getElementById('proxy-binding-primary')?.addEventListener('change', renderProxySelectors);
   document.getElementById('proxy-bindings-list')?.addEventListener('click', handleProxyBindingAction);
 
+  // Multi-Cloud Firewall action bindings
+  els.fwRefreshBtn?.addEventListener('click', () => fetchCurrentFirewalls());
+  els.fwCreateBtn?.addEventListener('click', () => handleFirewallCreateClick());
+  els.fwAccountSelect?.addEventListener('change', (e) => handleFirewallAccountSelect(e.target.value));
+  els.fwAccountPills?.addEventListener('click', (e) => {
+    const pill = e.target.closest('.fw-pill');
+    if (pill) handleFirewallPillClick(pill);
+  });
+
   // GCP Firewall action bindings
-  els.gcpFwRefreshBtn?.addEventListener('click', () => fetchGCPFirewalls());
-  els.gcpFwCreateBtn?.addEventListener('click', () => openGCPFirewallModal(null));
-  els.gcpFwAccountSelect?.addEventListener('change', (e) => fetchGCPFirewalls(e.target.value));
   els.gcpFwForm?.addEventListener('submit', handleGCPFirewallSubmit);
   els.gcpFwModalClose?.addEventListener('click', closeGCPFirewallModal);
   els.gcpFwModalCancel?.addEventListener('click', closeGCPFirewallModal);
@@ -158,28 +212,48 @@ function bindActions() {
     }
   });
 
-  els.gcpFwTableContainer?.addEventListener('click', (e) => {
-    const editBtn = e.target.closest('.gcp-fw-edit-btn');
-    if (editBtn) {
-      const name = editBtn.dataset.name;
-      const rule = currentGCPFirewalls.find(r => r.name === name);
-      if (rule) openGCPFirewallModal(rule);
-      return;
-    }
-    const toggleBtn = e.target.closest('.gcp-fw-toggle-btn');
-    if (toggleBtn) {
-      const name = toggleBtn.dataset.name;
-      const disabled = toggleBtn.dataset.disabled === 'true';
-      toggleGCPFirewall(name, disabled);
-      return;
-    }
-    const deleteBtn = e.target.closest('.gcp-fw-delete-btn');
-    if (deleteBtn) {
-      const name = deleteBtn.dataset.name;
-      deleteGCPFirewall(name);
-      return;
+  // Azure NSG Modal bindings
+  els.azureNsgModalClose?.addEventListener('click', closeAzureNSGModal);
+  els.azureNsgModalDone?.addEventListener('click', closeAzureNSGModal);
+  els.azureNsgTabInbound?.addEventListener('click', () => switchAzureNSGDirection('Inbound'));
+  els.azureNsgTabOutbound?.addEventListener('click', () => switchAzureNSGDirection('Outbound'));
+  els.azureNsgAddRuleBtn?.addEventListener('click', toggleAzureNSGAddForm);
+  els.azRuleCancelBtn?.addEventListener('click', hideAzureNSGAddForm);
+  els.azureNsgAddForm?.addEventListener('submit', handleAzureNSGAddSubmit);
+  document.getElementById('azure-quick-ports')?.addEventListener('click', handleAzureQuickPortClick);
+  els.azureNsgRulesContainer?.addEventListener('click', handleAzureRulesContainerClick);
+
+  // OCI Account Security List Modal bindings
+  els.ociAccSlModalClose?.addEventListener('click', closeOciAccountSLModal);
+  els.ociAccSlTabIngress?.addEventListener('click', () => switchOciAccountSLDirection('ingress'));
+  els.ociAccSlTabEgress?.addEventListener('click', () => switchOciAccountSLDirection('egress'));
+  els.ociAccSlAdd?.addEventListener('click', addOciAccountSLRuleRow);
+  els.ociAccSlSave?.addEventListener('click', saveOciAccountSecurityListRules);
+  els.ociAccSlModalBody?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.sg-rule-delete-btn');
+    if (btn) {
+      btn.closest('.sg-rule-row')?.remove();
+      if (!els.ociAccSlModalBody.querySelector('.sg-rule-row')) {
+        els.ociAccSlModalBody.innerHTML = `<div class="empty-state compact">暂无${ociAccountSLDirection === 'egress' ? '出站' : '入站'}规则</div>`;
+      }
     }
   });
+  els.ociAccSlModalBody?.addEventListener('change', (e) => {
+    const protocolSelect = e.target.closest('.sg-f-protocol');
+    if (protocolSelect) {
+      applySecurityProtocolPreset(protocolSelect.closest('.sg-rule-row'));
+      updateSecurityListProtocolControls();
+    }
+    const icmpTypeSelect = e.target.closest('.sg-f-icmp-type');
+    if (icmpTypeSelect) {
+      const row = icmpTypeSelect.closest('.sg-rule-row');
+      const codeSelect = row?.querySelector('.sg-f-icmp-code');
+      if (codeSelect) codeSelect.innerHTML = icmpCodeOptionsHtml(icmpTypeSelect.value, '');
+    }
+  });
+
+  // Unified Firewall table container clicks
+  els.fwContentContainer?.addEventListener('click', handleFirewallTableAction);
   document.addEventListener('click', event => {
     // 1. Toggle for Level 2 (instances menu)
     const instToggle = event.target.closest('#instances-toggle-btn');
@@ -332,7 +406,7 @@ async function fetchAccounts() {
     proxyAccounts = accountsArr;
     renderAccounts(accountsArr);
     renderSidebarAccounts(accountsArr);
-    renderGCPFirewallAccounts(accountsArr);
+    renderFirewallAccounts(accountsArr);
     fetchOverview();
   } catch (error) {
     els.accountList.innerHTML = `<div class="empty-state compact error">读取失败：${escapeHtml(error.message)}</div>`;
@@ -517,7 +591,7 @@ function renderVMCard(vm) {
         <button class="action-btn dns-bind" type="button" data-action="dns-bind">DNS 绑定</button>
         ${provider === 'oci' ? '<button class="action-btn edit" type="button" data-action="edit">编辑</button>' : ''}
         ${provider === 'oci' ? '<button class="action-btn security-list" type="button" data-action="security-list">安全规则</button>' : ''}
-        ${provider === 'gcp' ? '<button class="action-btn gcp-firewall" type="button" data-action="gcp-firewall">防火墙</button>' : ''}
+        <button class="action-btn firewall" type="button" data-action="firewall">防火墙</button>
       </div>
     </article>
   `;
@@ -554,8 +628,8 @@ async function handleVMAction(button) {
     openOCIEditModal(vm);
     return;
   }
-  if (action === 'gcp-firewall') {
-    switchToGCPFirewall(vm.accountId);
+  if (action === 'firewall' || action === 'gcp-firewall') {
+    switchToFirewall(vm.provider, vm.accountId);
     return;
   }
   if (action === 'start' && vm.status === 'VM running') {
@@ -2629,42 +2703,223 @@ async function fetchOverview() {
 }
 
 // ==========================================
-// GCP Firewall Management Functions
+// Multi-Cloud Firewall Management Functions
 // ==========================================
 
-function renderGCPFirewallAccounts(accounts) {
-  if (!els.gcpFwAccountSelect) return;
-  const gcpAccounts = accounts.filter(a => a.provider === 'gcp');
-  if (gcpAccounts.length === 0) {
-    els.gcpFwAccountSelect.innerHTML = '<option value="">无可用 GCP 账号</option>';
-    if (els.gcpFwTableContainer) {
-      els.gcpFwTableContainer.innerHTML = '<div class="empty-state compact">未检测到已配置的 GCP 账号。可在 config 配置文件中添加 GCP 账号。</div>';
+function renderFirewallAccounts(accounts) {
+  firewallAccounts = (accounts || []).filter(a => ['gcp', 'oci', 'azure'].includes((a.provider || '').toLowerCase()));
+  if (!els.fwAccountPills || !els.fwAccountSelect) return;
+
+  if (firewallAccounts.length === 0) {
+    els.fwAccountPills.innerHTML = '<span class="empty-state compact" style="margin: 0;">暂无可管理防火墙的云账号</span>';
+    els.fwAccountSelect.innerHTML = '<option value="">无可用账号</option>';
+    if (els.fwContentContainer) {
+      els.fwContentContainer.innerHTML = '<div class="empty-state compact">未检测到已配置的 GCP / OCI / Azure 账号。可在配置文件中添加账号。</div>';
     }
     return;
   }
 
-  els.gcpFwAccountSelect.innerHTML = gcpAccounts.map(a => `
-    <option value="${escapeAttr(a.account)}">${escapeHtml(a.account)}${a.group ? ` (${escapeHtml(a.group)})` : ''}</option>
-  `).join('');
+  // Render pills
+  els.fwAccountPills.innerHTML = firewallAccounts.map(a => {
+    const prov = (a.provider || '').toLowerCase();
+    const isSelected = selectedFirewallAccount &&
+      selectedFirewallAccount.provider.toLowerCase() === prov &&
+      selectedFirewallAccount.account === a.account;
+    return `
+      <div class="fw-pill ${isSelected ? 'active' : ''}" data-provider="${escapeAttr(prov)}" data-account="${escapeAttr(a.account)}">
+        <span class="prov-badge ${escapeAttr(prov)}">${escapeHtml(prov.toUpperCase())}</span>
+        <span>${escapeHtml(a.account)}</span>
+      </div>
+    `;
+  }).join('');
 
-  if (!selectedGCPFirewallAccount || !gcpAccounts.some(a => a.account === selectedGCPFirewallAccount)) {
-    selectedGCPFirewallAccount = gcpAccounts[0].account;
+  // Render select options
+  els.fwAccountSelect.innerHTML = firewallAccounts.map(a => {
+    const prov = (a.provider || '').toLowerCase();
+    const val = `${prov}:${a.account}`;
+    return `<option value="${escapeAttr(val)}">[${prov.toUpperCase()}] ${escapeHtml(a.account)}${a.group ? ` (${escapeHtml(a.group)})` : ''}</option>`;
+  }).join('');
+
+  // Pick initial account if needed
+  if (!selectedFirewallAccount || !firewallAccounts.some(a => a.provider.toLowerCase() === selectedFirewallAccount.provider.toLowerCase() && a.account === selectedFirewallAccount.account)) {
+    selectedFirewallAccount = {
+      provider: firewallAccounts[0].provider.toLowerCase(),
+      account: firewallAccounts[0].account,
+      group: firewallAccounts[0].group
+    };
   }
-  els.gcpFwAccountSelect.value = selectedGCPFirewallAccount;
+
+  syncFirewallAccountUI();
 }
 
-async function fetchGCPFirewalls(account) {
-  if (!account) {
-    account = els.gcpFwAccountSelect?.value || selectedGCPFirewallAccount;
-  }
-  if (!account) return;
-  selectedGCPFirewallAccount = account;
+function syncFirewallAccountUI() {
+  if (!selectedFirewallAccount) return;
+  const prov = selectedFirewallAccount.provider.toLowerCase();
+  const acc = selectedFirewallAccount.account;
+  const val = `${prov}:${acc}`;
 
-  if (els.gcpFwTableContainer) {
-    els.gcpFwTableContainer.innerHTML = '<div class="empty-state compact">正在加载 GCP 防火墙规则...</div>';
+  if (els.fwAccountSelect) {
+    els.fwAccountSelect.value = val;
   }
-  if (els.gcpFwAccountMeta) {
-    els.gcpFwAccountMeta.textContent = `当前账号：${account}`;
+
+  if (els.fwAccountPills) {
+    els.fwAccountPills.querySelectorAll('.fw-pill').forEach(pill => {
+      const match = pill.dataset.provider === prov && pill.dataset.account === acc;
+      pill.classList.toggle('active', match);
+    });
+  }
+
+  const provNames = {
+    gcp: 'Google Cloud (VPC 全局防火墙)',
+    oci: 'Oracle Cloud (安全列表 Security List)',
+    azure: 'Microsoft Azure (网络安全组 NSG)'
+  };
+  if (els.fwAccountMeta) {
+    els.fwAccountMeta.innerHTML = `当前厂商：<strong>${escapeHtml(provNames[prov] || prov.toUpperCase())}</strong> &nbsp;|&nbsp; 账号：<code>${escapeHtml(acc)}</code>`;
+  }
+
+  if (els.fwCreateBtn) {
+    if (prov === 'gcp') {
+      els.fwCreateBtn.style.display = 'inline-flex';
+      if (els.fwCreateBtnLabel) els.fwCreateBtnLabel.textContent = '新建 VPC 规则';
+    } else {
+      els.fwCreateBtn.style.display = 'none';
+    }
+  }
+}
+
+function handleFirewallAccountSelect(val) {
+  if (!val) return;
+  const [provider, ...rest] = val.split(':');
+  const account = rest.join(':');
+  selectFirewallAccount(provider, account);
+}
+
+function handleFirewallPillClick(pill) {
+  const provider = pill.dataset.provider;
+  const account = pill.dataset.account;
+  selectFirewallAccount(provider, account);
+}
+
+function selectFirewallAccount(provider, account) {
+  const match = firewallAccounts.find(a => a.provider.toLowerCase() === provider.toLowerCase() && a.account === account);
+  if (match) {
+    selectedFirewallAccount = {
+      provider: match.provider.toLowerCase(),
+      account: match.account,
+      group: match.group
+    };
+    syncFirewallAccountUI();
+    fetchCurrentFirewalls();
+  }
+}
+
+function initFirewallSection() {
+  if (!selectedFirewallAccount && firewallAccounts.length > 0) {
+    selectedFirewallAccount = {
+      provider: firewallAccounts[0].provider.toLowerCase(),
+      account: firewallAccounts[0].account,
+      group: firewallAccounts[0].group
+    };
+    syncFirewallAccountUI();
+  }
+  fetchCurrentFirewalls();
+}
+
+function switchToFirewall(provider, accountId) {
+  document.querySelectorAll('.nav-item').forEach(i => {
+    i.classList.toggle('active', i.dataset.section === 'firewall');
+  });
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById('firewall-section')?.classList.add('active');
+
+  if (provider && accountId) {
+    selectFirewallAccount(provider, accountId);
+  } else {
+    initFirewallSection();
+  }
+}
+
+function handleFirewallCreateClick() {
+  if (!selectedFirewallAccount) return;
+  if (selectedFirewallAccount.provider === 'gcp') {
+    openGCPFirewallModal(null);
+  }
+}
+
+async function fetchCurrentFirewalls() {
+  if (!selectedFirewallAccount) {
+    if (els.fwContentContainer) {
+      els.fwContentContainer.innerHTML = '<div class="empty-state compact">请先选择云账号。</div>';
+    }
+    return;
+  }
+  const prov = selectedFirewallAccount.provider.toLowerCase();
+  const acc = selectedFirewallAccount.account;
+
+  if (prov === 'gcp') {
+    await fetchGCPFirewalls(acc);
+  } else if (prov === 'oci') {
+    await fetchOciSecurityLists(acc);
+  } else if (prov === 'azure') {
+    await fetchAzureNSGs(acc);
+  }
+}
+
+// ------------------------------------------
+// Table Action Delegation
+// ------------------------------------------
+function handleFirewallTableAction(event) {
+  // GCP actions
+  const gcpEdit = event.target.closest('.gcp-fw-edit-btn');
+  if (gcpEdit) {
+    const name = gcpEdit.dataset.name;
+    const rule = currentGCPFirewalls.find(r => r.name === name);
+    if (rule) openGCPFirewallModal(rule);
+    return;
+  }
+  const gcpToggle = event.target.closest('.gcp-fw-toggle-btn');
+  if (gcpToggle) {
+    const name = gcpToggle.dataset.name;
+    const disabled = gcpToggle.dataset.disabled === 'true';
+    toggleGCPFirewall(name, disabled);
+    return;
+  }
+  const gcpDel = event.target.closest('.gcp-fw-delete-btn');
+  if (gcpDel) {
+    const name = gcpDel.dataset.name;
+    deleteGCPFirewall(name);
+    return;
+  }
+
+  // OCI SL actions
+  const ociManage = event.target.closest('.oci-sl-manage-btn');
+  if (ociManage) {
+    const listId = ociManage.dataset.id;
+    const list = currentOciSecurityLists.find(l => l.id === listId);
+    if (list) openOciAccountSLModal(list);
+    return;
+  }
+
+  // Azure NSG actions
+  const azManage = event.target.closest('.azure-nsg-manage-btn');
+  if (azManage) {
+    const name = azManage.dataset.name;
+    const nsg = currentAzureNSGs.find(n => n.name === name);
+    if (nsg) openAzureNSGModal(nsg);
+    return;
+  }
+}
+
+// ------------------------------------------
+// GCP Firewall Methods
+// ------------------------------------------
+async function fetchGCPFirewalls(account) {
+  if (!account && selectedFirewallAccount) account = selectedFirewallAccount.account;
+  if (!account) return;
+
+  if (els.fwContentContainer) {
+    els.fwContentContainer.innerHTML = '<div class="empty-state compact">正在加载 GCP 防火墙规则...</div>';
   }
 
   try {
@@ -2673,23 +2928,23 @@ async function fetchGCPFirewalls(account) {
     renderGCPFirewallsTable(currentGCPFirewalls);
     addLog(`已加载 GCP 账号 ${account} 的防火墙规则，共 ${currentGCPFirewalls.length} 条。`, 'info');
   } catch (error) {
-    if (els.gcpFwTableContainer) {
-      els.gcpFwTableContainer.innerHTML = `<div class="empty-state compact error">加载规则失败：${escapeHtml(error.message)}</div>`;
+    if (els.fwContentContainer) {
+      els.fwContentContainer.innerHTML = `<div class="empty-state compact error">加载规则失败：${escapeHtml(error.message)}</div>`;
     }
     addLog(`加载 GCP 防火墙规则失败：${error.message}`, 'error');
   }
 }
 
 function renderGCPFirewallsTable(rules) {
-  if (!els.gcpFwTableContainer) return;
+  if (!els.fwContentContainer) return;
   if (!rules || rules.length === 0) {
-    els.gcpFwTableContainer.innerHTML = '<div class="empty-state compact">当前 VPC 下暂无防火墙规则。</div>';
+    els.fwContentContainer.innerHTML = '<div class="empty-state compact">当前 VPC 下暂无防火墙规则。点击右上角「新建 VPC 规则」创建。</div>';
     return;
   }
 
   const sorted = [...rules].sort((a, b) => (a.priority || 1000) - (b.priority || 1000) || (a.name || '').localeCompare(b.name || ''));
 
-  els.gcpFwTableContainer.innerHTML = `
+  els.fwContentContainer.innerHTML = `
     <table class="gcp-fw-table">
       <thead>
         <tr>
@@ -2842,7 +3097,7 @@ function updateGCPProtocolUI() {
 
 async function handleGCPFirewallSubmit(event) {
   event.preventDefault();
-  const account = els.gcpFwAccountSelect?.value || selectedGCPFirewallAccount;
+  const account = selectedFirewallAccount?.account;
   if (!account) {
     showFormMessage(els.gcpFwModalMsg, '未选择 GCP 账号', 'error');
     return;
@@ -2907,7 +3162,7 @@ async function handleGCPFirewallSubmit(event) {
 }
 
 async function toggleGCPFirewall(name, currentlyDisabled) {
-  const account = selectedGCPFirewallAccount || els.gcpFwAccountSelect?.value;
+  const account = selectedFirewallAccount?.account;
   if (!account) return;
   const newDisabled = !currentlyDisabled;
   const actionText = newDisabled ? '禁用' : '启用';
@@ -2927,7 +3182,7 @@ async function toggleGCPFirewall(name, currentlyDisabled) {
 }
 
 async function deleteGCPFirewall(name) {
-  const account = selectedGCPFirewallAccount || els.gcpFwAccountSelect?.value;
+  const account = selectedFirewallAccount?.account;
   if (!account) return;
   if (!confirm(`确定要删除 GCP 防火墙规则 ${name} 吗？此操作不可撤销！`)) {
     return;
@@ -2946,15 +3201,640 @@ async function deleteGCPFirewall(name) {
 }
 
 function switchToGCPFirewall(account) {
-  document.querySelectorAll('.nav-item').forEach(i => {
-    i.classList.toggle('active', i.dataset.section === 'gcp-firewall');
-  });
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.getElementById('gcp-firewall-section')?.classList.add('active');
-  if (account && els.gcpFwAccountSelect) {
-    els.gcpFwAccountSelect.value = account;
-    selectedGCPFirewallAccount = account;
+  switchToFirewall('gcp', account);
+}
+
+// ------------------------------------------
+// OCI Account Security Lists Methods
+// ------------------------------------------
+async function fetchOciSecurityLists(account) {
+  if (!account && selectedFirewallAccount) account = selectedFirewallAccount.account;
+  if (!account) return;
+
+  if (els.fwContentContainer) {
+    els.fwContentContainer.innerHTML = '<div class="empty-state compact">正在加载 OCI 安全列表...</div>';
   }
-  fetchGCPFirewalls(account);
+
+  try {
+    const data = await fetchJSON(`/api/oci/${encodeURIComponent(account)}/security-lists`);
+    currentOciSecurityLists = Array.isArray(data?.securityLists) ? data.securityLists : [];
+    renderOciSecurityListsTable(currentOciSecurityLists);
+    addLog(`已加载 OCI 账号 ${account} 的安全列表，共 ${currentOciSecurityLists.length} 个。`, 'info');
+  } catch (error) {
+    if (els.fwContentContainer) {
+      els.fwContentContainer.innerHTML = `<div class="empty-state compact error">加载 OCI 安全列表失败：${escapeHtml(error.message)}</div>`;
+    }
+    addLog(`加载 OCI 安全列表失败：${error.message}`, 'error');
+  }
+}
+
+function renderOciSecurityListsTable(lists) {
+  if (!els.fwContentContainer) return;
+  if (!lists || lists.length === 0) {
+    els.fwContentContainer.innerHTML = '<div class="empty-state compact">当前 OCI 账号下暂无安全列表 (Security List)。</div>';
+    return;
+  }
+
+  els.fwContentContainer.innerHTML = `
+    <table class="gcp-fw-table">
+      <thead>
+        <tr>
+          <th>安全列表名称</th>
+          <th>入站规则数</th>
+          <th>出站规则数</th>
+          <th>OCID 标识</th>
+          <th style="text-align: right;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${lists.map(list => {
+          const inCount = Array.isArray(list.ingressRules) ? list.ingressRules.length : 0;
+          const outCount = Array.isArray(list.egressRules) ? list.egressRules.length : 0;
+          return `
+            <tr data-id="${escapeAttr(list.id)}">
+              <td>
+                <strong style="color: var(--text);">${escapeHtml(list.name || list.id)}</strong>
+              </td>
+              <td><span class="fw-badge fw-badge-ingress">${inCount} 条入站</span></td>
+              <td><span class="fw-badge fw-badge-egress">${outCount} 条出站</span></td>
+              <td><code style="font-size: 11px; color: var(--muted);">${escapeHtml((list.id || '').slice(0, 36))}...</code></td>
+              <td style="text-align: right;">
+                <div class="fw-actions-cell" style="justify-content: flex-end;">
+                  <button class="secondary-btn oci-sl-manage-btn" type="button" data-id="${escapeAttr(list.id)}" title="管理入站/出站规则">
+                    <i class="bi bi-shield-lock"></i>
+                    <span>管理规则</span>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function openOciAccountSLModal(list) {
+  if (!els.ociAccSlModal || !list) return;
+  currentOciAccountSL = list;
+  ociAccountSLDirection = 'ingress';
+  ociAccountSLData = {
+    ingress: JSON.parse(JSON.stringify(list.ingressRules || [])),
+    egress: JSON.parse(JSON.stringify(list.egressRules || []))
+  };
+
+  if (els.ociAccSlModalTitle) {
+    els.ociAccSlModalTitle.textContent = `OCI 安全列表 - ${list.name || list.id}`;
+  }
+  if (els.ociAccSlMsg) {
+    els.ociAccSlMsg.textContent = '';
+    els.ociAccSlMsg.className = 'form-message';
+  }
+
+  els.ociAccSlModal.hidden = false;
+  updateOciAccountSLTabs();
+  renderOciAccountSLRules();
+}
+
+function closeOciAccountSLModal() {
+  if (els.ociAccSlModal) {
+    els.ociAccSlModal.hidden = true;
+  }
+  currentOciAccountSL = null;
+}
+
+function switchOciAccountSLDirection(dir) {
+  saveCurrentOciAccountSLInputState();
+  ociAccountSLDirection = dir;
+  updateOciAccountSLTabs();
+  renderOciAccountSLRules();
+}
+
+function updateOciAccountSLTabs() {
+  if (els.ociAccSlTabIngress) {
+    els.ociAccSlTabIngress.classList.toggle('active', ociAccountSLDirection === 'ingress');
+  }
+  if (els.ociAccSlTabEgress) {
+    els.ociAccSlTabEgress.classList.toggle('active', ociAccountSLDirection === 'egress');
+  }
+}
+
+function renderOciAccountSLRules() {
+  if (!els.ociAccSlModalBody) return;
+  const rules = ociAccountSLData[ociAccountSLDirection] || [];
+  if (rules.length === 0) {
+    els.ociAccSlModalBody.innerHTML = `<div class="empty-state compact">暂无${ociAccountSLDirection === 'egress' ? '出站' : '入站'}安全规则，点击下方「+ 添加安全规则」创建</div>`;
+    return;
+  }
+
+  els.ociAccSlModalBody.innerHTML = rules.map((rule, index) => ociAccountSLRuleRowHtml(rule, index, ociAccountSLDirection)).join('');
+  updateSecurityListProtocolControls();
+}
+
+function ociAccountSLRuleRowHtml(rule = {}, index = 0, direction = 'ingress') {
+  const protocol = normalizeSecurityListProtocol(rule.protocol || '6');
+  const minPort = rule.minPort ?? '';
+  const maxPort = rule.maxPort ?? '';
+  const icmpType = rule.icmpType ?? '';
+  const icmpCode = rule.icmpCode ?? '';
+  const endpoint = direction === 'egress'
+    ? (rule.destination || '0.0.0.0/0')
+    : (rule.source || '0.0.0.0/0');
+  const endpointType = direction === 'egress'
+    ? (rule.destinationType || 'CIDR_BLOCK')
+    : (rule.sourceType || 'CIDR_BLOCK');
+  const description = rule.description || '';
+  const rowLabel = `规则 ${index + 1}`;
+  const endpointLabel = direction === 'egress' ? '目标 CIDR' : '来源 CIDR';
+  const endpointTypeLabel = direction === 'egress' ? '目标类型' : '来源类型';
+  const protocolOption = SECURITY_PROTOCOL_OPTIONS.find(option =>
+    option.value === protocol && (option.minPort ?? '') === minPort && (option.maxPort ?? '') === maxPort
+  );
+  const protocolSelectValue = protocolOption ? securityProtocolOptionValue(protocolOption) : securityProtocolOptionValue({value: protocol});
+
+  return `<div class="sg-rule-row" data-rule-id="${escapeAttr(rule.id || '')}">
+    <div class="sg-rule-meta">
+      <strong>${escapeHtml(rowLabel)}</strong>
+      <span>${rule.id ? escapeHtml(rule.id) : (direction === 'egress' ? '出站' : '入站') + '安全规则'}</span>
+    </div>
+    <div class="sg-rule-fields">
+      <label class="field compact">
+        <span>协议</span>
+        <select class="sg-f-protocol">${securityProtocolOptionsHtml(protocolSelectValue)}</select>
+      </label>
+      <label class="field compact">
+        <span>${endpointLabel}</span>
+        <input type="text" class="sg-f-endpoint" value="${escapeAttr(endpoint)}" placeholder="0.0.0.0/0">
+      </label>
+      <label class="field compact">
+        <span>端口起</span>
+        <input type="number" class="sg-f-min-port" min="1" max="65535" value="${escapeAttr(minPort)}" placeholder="全部">
+      </label>
+      <label class="field compact">
+        <span>端口止</span>
+        <input type="number" class="sg-f-max-port" min="1" max="65535" value="${escapeAttr(maxPort)}" placeholder="同起始">
+      </label>
+      <label class="field compact">
+        <span>ICMP 类型</span>
+        <select class="sg-f-icmp-type">${icmpTypeOptionsHtml(icmpType)}</select>
+      </label>
+      <label class="field compact">
+        <span>ICMP 代码</span>
+        <select class="sg-f-icmp-code">${icmpCodeOptionsHtml(icmpType, icmpCode)}</select>
+      </label>
+      <label class="field compact">
+        <span>${endpointTypeLabel}</span>
+        <select class="sg-f-endpoint-type">
+          <option value="CIDR_BLOCK" ${endpointType === 'CIDR_BLOCK' ? 'selected' : ''}>CIDR</option>
+          <option value="SERVICE_CIDR_BLOCK" ${endpointType === 'SERVICE_CIDR_BLOCK' ? 'selected' : ''}>Service CIDR</option>
+          <option value="NETWORK_SECURITY_GROUP" ${endpointType === 'NETWORK_SECURITY_GROUP' ? 'selected' : ''}>Network Security Group</option>
+        </select>
+      </label>
+      <label class="switch-row compact">
+        <input type="checkbox" class="sg-f-stateless" ${rule.isStateless ? 'checked' : ''}>
+        <span>无状态</span>
+      </label>
+      <label class="field compact sg-description-field">
+        <span>描述</span>
+        <input type="text" class="sg-f-description" value="${escapeAttr(description)}" placeholder="可选">
+      </label>
+    </div>
+    <div class="sg-rule-footer">
+      <div class="sg-allow-summary">
+        <span>允许</span>
+        <strong>${escapeHtml(securityRuleAllowText({ protocol, minPort, maxPort, icmpType, icmpCode }))}</strong>
+      </div>
+      <button class="ghost-btn dns-remove-btn sg-rule-delete-btn" type="button">删除</button>
+    </div>
+  </div>`;
+}
+
+function saveCurrentOciAccountSLInputState() {
+  if (!els.ociAccSlModalBody) return;
+  const rows = els.ociAccSlModalBody.querySelectorAll('.sg-rule-row');
+  const rules = Array.from(rows).map(row => {
+    const selectedProtocol = parseSecurityProtocolSelection(row.querySelector('.sg-f-protocol')?.value || 'all');
+    const protocol = selectedProtocol.protocol;
+    const minPort = securityRuleNumberValue(row.querySelector('.sg-f-min-port')?.value);
+    const maxPort = securityRuleNumberValue(row.querySelector('.sg-f-max-port')?.value);
+    const icmpType = securityRuleNumberValue(row.querySelector('.sg-f-icmp-type')?.value);
+    const icmpCode = securityRuleNumberValue(row.querySelector('.sg-f-icmp-code')?.value);
+    const endpoint = row.querySelector('.sg-f-endpoint')?.value?.trim() || '';
+    const endpointType = row.querySelector('.sg-f-endpoint-type')?.value || 'CIDR_BLOCK';
+    const rule = {
+      id: row.dataset.ruleId || '',
+      protocol,
+      minPort: protocol === '6' || protocol === '17' ? minPort : null,
+      maxPort: protocol === '6' || protocol === '17' ? maxPort : null,
+      icmpType: protocol === '1' ? icmpType : null,
+      icmpCode: protocol === '1' ? icmpCode : null,
+      description: row.querySelector('.sg-f-description')?.value?.trim() || '',
+      isStateless: row.querySelector('.sg-f-stateless')?.checked || false
+    };
+    if (ociAccountSLDirection === 'egress') {
+      rule.destination = endpoint;
+      rule.destinationType = endpointType;
+    } else {
+      rule.source = endpoint;
+      rule.sourceType = endpointType;
+    }
+    return rule;
+  });
+  ociAccountSLData[ociAccountSLDirection] = rules;
+}
+
+function addOciAccountSLRuleRow() {
+  saveCurrentOciAccountSLInputState();
+  ociAccountSLData[ociAccountSLDirection].push({
+    protocol: '6',
+    minPort: 80,
+    maxPort: 80,
+    source: '0.0.0.0/0',
+    destination: '0.0.0.0/0',
+    sourceType: 'CIDR_BLOCK',
+    destinationType: 'CIDR_BLOCK',
+    isStateless: false,
+    description: ''
+  });
+  renderOciAccountSLRules();
+}
+
+async function saveOciAccountSecurityListRules() {
+  const account = selectedFirewallAccount?.account;
+  const list = currentOciAccountSL;
+  if (!account || !list) return;
+
+  saveCurrentOciAccountSLInputState();
+
+  if (els.ociAccSlMsg) {
+    els.ociAccSlMsg.textContent = '正在保存规则到 OCI...';
+    els.ociAccSlMsg.className = 'form-message';
+  }
+  if (els.ociAccSlSave) els.ociAccSlSave.disabled = true;
+
+  try {
+    await fetchJSON(`/api/oci/${encodeURIComponent(account)}/security-lists/${encodeURIComponent(list.id)}/rules`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ingressRules: ociAccountSLData.ingress,
+        egressRules: ociAccountSLData.egress
+      })
+    });
+
+    list.ingressRules = ociAccountSLData.ingress;
+    list.egressRules = ociAccountSLData.egress;
+
+    if (els.ociAccSlMsg) {
+      els.ociAccSlMsg.textContent = '安全列表规则已成功保存。';
+      els.ociAccSlMsg.className = 'form-message success';
+    }
+    addLog(`OCI 安全列表 ${list.name || list.id} 规则已保存。`, 'success');
+    fetchCurrentFirewalls();
+  } catch (err) {
+    if (els.ociAccSlMsg) {
+      els.ociAccSlMsg.textContent = `保存失败: ${err.message}`;
+      els.ociAccSlMsg.className = 'form-message error';
+    }
+    addLog(`保存 OCI 安全列表规则失败: ${err.message}`, 'error');
+  } finally {
+    if (els.ociAccSlSave) els.ociAccSlSave.disabled = false;
+  }
+}
+
+// ------------------------------------------
+// Azure NSG Management Methods
+// ------------------------------------------
+async function fetchAzureNSGs(account) {
+  if (!account && selectedFirewallAccount) account = selectedFirewallAccount.account;
+  if (!account) return;
+
+  if (els.fwContentContainer) {
+    els.fwContentContainer.innerHTML = '<div class="empty-state compact">正在加载 Azure 网络安全组 (NSG)...</div>';
+  }
+
+  try {
+    const data = await fetchJSON(`/api/azure/${encodeURIComponent(account)}/security-groups`);
+    currentAzureNSGs = Array.isArray(data?.securityGroups) ? data.securityGroups : [];
+    renderAzureNSGsTable(currentAzureNSGs);
+    addLog(`已加载 Azure 账号 ${account} 的网络安全组，共 ${currentAzureNSGs.length} 个。`, 'info');
+  } catch (error) {
+    if (els.fwContentContainer) {
+      els.fwContentContainer.innerHTML = `<div class="empty-state compact error">加载 Azure 网络安全组失败：${escapeHtml(error.message)}</div>`;
+    }
+    addLog(`加载 Azure 网络安全组失败：${error.message}`, 'error');
+  }
+}
+
+function renderAzureNSGsTable(nsgs) {
+  if (!els.fwContentContainer) return;
+  if (!nsgs || nsgs.length === 0) {
+    els.fwContentContainer.innerHTML = '<div class="empty-state compact">当前订阅下未发现网络安全组 (NSG)。</div>';
+    return;
+  }
+
+  els.fwContentContainer.innerHTML = `
+    <table class="gcp-fw-table">
+      <thead>
+        <tr>
+          <th>安全组名称</th>
+          <th>资源组</th>
+          <th>区域</th>
+          <th>自定义规则 (入站 / 出站)</th>
+          <th>系统默认规则</th>
+          <th style="text-align: right;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${nsgs.map(nsg => {
+          const rules = Array.isArray(nsg.securityRules) ? nsg.securityRules : [];
+          const inCount = rules.filter(r => (r.direction || '').toLowerCase() === 'inbound').length;
+          const outCount = rules.filter(r => (r.direction || '').toLowerCase() === 'outbound').length;
+          const defCount = Array.isArray(nsg.defaultSecurityRules) ? nsg.defaultSecurityRules.length : 0;
+          return `
+            <tr data-name="${escapeAttr(nsg.name)}">
+              <td>
+                <strong style="color: var(--text);">${escapeHtml(nsg.name)}</strong>
+              </td>
+              <td><code>${escapeHtml(nsg.resourceGroup || '-')}</code></td>
+              <td>${escapeHtml(getLocationText(nsg.location || 'N/A'))}</td>
+              <td>
+                <span class="fw-badge fw-badge-ingress">${inCount} 入站</span>
+                <span class="fw-badge fw-badge-egress">${outCount} 出站</span>
+              </td>
+              <td><span style="color: var(--muted); font-size: 12px;">${defCount} 条系统规则</span></td>
+              <td style="text-align: right;">
+                <div class="fw-actions-cell" style="justify-content: flex-end;">
+                  <button class="secondary-btn azure-nsg-manage-btn" type="button" data-name="${escapeAttr(nsg.name)}" title="管理入站/出站规则">
+                    <i class="bi bi-shield-check"></i>
+                    <span>管理规则</span>
+                  </button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function openAzureNSGModal(nsg) {
+  if (!els.azureNsgModal || !nsg) return;
+  currentAzureNSG = nsg;
+  azureNSGDirection = 'Inbound';
+  hideAzureNSGAddForm();
+
+  if (els.azureNsgModalTitle) {
+    els.azureNsgModalTitle.textContent = `Azure 网络安全组 - ${nsg.name} (${nsg.resourceGroup || nsg.location})`;
+  }
+
+  updateAzureNSGTabs();
+  renderAzureNSGRulesList();
+  els.azureNsgModal.hidden = false;
+}
+
+function closeAzureNSGModal() {
+  if (els.azureNsgModal) {
+    els.azureNsgModal.hidden = true;
+  }
+  currentAzureNSG = null;
+}
+
+function switchAzureNSGDirection(dir) {
+  azureNSGDirection = dir;
+  updateAzureNSGTabs();
+  hideAzureNSGAddForm();
+  renderAzureNSGRulesList();
+}
+
+function updateAzureNSGTabs() {
+  if (els.azureNsgTabInbound) {
+    els.azureNsgTabInbound.classList.toggle('active', azureNSGDirection === 'Inbound');
+  }
+  if (els.azureNsgTabOutbound) {
+    els.azureNsgTabOutbound.classList.toggle('active', azureNSGDirection === 'Outbound');
+  }
+}
+
+function renderAzureNSGRulesList() {
+  if (!els.azureNsgRulesContainer || !currentAzureNSG) return;
+  const isMatchDir = (r) => (r.direction || '').toLowerCase() === azureNSGDirection.toLowerCase();
+  const customRules = (currentAzureNSG.securityRules || []).filter(isMatchDir).sort((a, b) => (a.priority || 1000) - (b.priority || 1000));
+  const defRules = (currentAzureNSG.defaultSecurityRules || []).filter(isMatchDir).sort((a, b) => (a.priority || 65000) - (b.priority || 65000));
+
+  if (customRules.length === 0 && defRules.length === 0) {
+    els.azureNsgRulesContainer.innerHTML = `<div class="empty-state compact">暂无${azureNSGDirection === 'Inbound' ? '入站' : '出站'}规则，点击右上角「添加规则」创建</div>`;
+    return;
+  }
+
+  const renderRow = (rule, isDefault) => {
+    const isAllow = (rule.access || 'Allow').toLowerCase() === 'allow';
+    const port = rule.destinationPortRange || '*';
+    const proto = rule.protocol || '*';
+    const src = rule.sourceAddressPrefix || '*';
+    return `
+      <tr style="${isDefault ? 'opacity: 0.72; background: rgba(0,0,0,0.02);' : ''}">
+        <td><strong>${rule.priority ?? '-'}</strong></td>
+        <td>
+          <span style="font-weight: 500;">${escapeHtml(rule.name)}</span>
+          ${isDefault ? '<span class="prov-badge" style="background: var(--panel-border); color: var(--muted); margin-left: 6px;">系统默认</span>' : ''}
+          ${rule.description ? `<div style="color: var(--muted); font-size: 11px;">${escapeHtml(rule.description)}</div>` : ''}
+        </td>
+        <td><code>${escapeHtml(port)}</code></td>
+        <td><code>${escapeHtml(proto)}</code></td>
+        <td><span style="font-family: monospace; font-size: 11px;">${escapeHtml(src)}</span></td>
+        <td>
+          <span class="fw-badge ${isAllow ? 'fw-badge-allow' : 'fw-badge-deny'}">
+            ${isAllow ? 'Allow 允许' : 'Deny 拒绝'}
+          </span>
+        </td>
+        <td style="text-align: right;">
+          ${isDefault 
+            ? '<span style="color: var(--muted); font-size: 12px;" title="系统默认规则不可修改"><i class="bi bi-lock"></i> 只读</span>'
+            : `<button class="ghost-btn azure-rule-delete-btn" type="button" data-name="${escapeAttr(rule.name)}" style="color: var(--red);" title="删除规则">
+                 <i class="bi bi-trash"></i>
+                 <span>删除</span>
+               </button>`
+          }
+        </td>
+      </tr>
+    `;
+  };
+
+  els.azureNsgRulesContainer.innerHTML = `
+    <table class="azure-nsg-table">
+      <thead>
+        <tr>
+          <th>优先级</th>
+          <th>规则名称</th>
+          <th>端口</th>
+          <th>协议</th>
+          <th>源地址</th>
+          <th>动作</th>
+          <th style="text-align: right;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${customRules.map(r => renderRow(r, false)).join('')}
+        ${defRules.map(r => renderRow(r, true)).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function toggleAzureNSGAddForm() {
+  if (!els.azureNsgAddForm) return;
+  const isHidden = els.azureNsgAddForm.style.display === 'none' || !els.azureNsgAddForm.style.display;
+  if (isHidden) {
+    els.azureNsgAddForm.style.display = 'block';
+    // Calculate smart next priority
+    const isMatchDir = (r) => (r.direction || '').toLowerCase() === azureNSGDirection.toLowerCase();
+    const customRules = (currentAzureNSG?.securityRules || []).filter(isMatchDir);
+    let nextPriority = 1000;
+    if (customRules.length > 0) {
+      const maxP = Math.max(...customRules.map(r => r.priority || 0));
+      nextPriority = Math.min(4090, maxP + 10);
+    }
+    if (els.azRulePriority) els.azRulePriority.value = nextPriority;
+    if (els.azRuleName) els.azRuleName.value = '';
+    if (els.azRuleDestPort) els.azRuleDestPort.value = '80';
+    if (els.azRuleSourceIp) els.azRuleSourceIp.value = '*';
+    if (els.azRuleAccess) els.azRuleAccess.value = 'Allow';
+    if (els.azRuleProtocol) els.azRuleProtocol.value = 'Tcp';
+    if (els.azRuleDesc) els.azRuleDesc.value = '';
+    if (els.azureNsgFormMsg) {
+      els.azureNsgFormMsg.textContent = '';
+      els.azureNsgFormMsg.className = 'form-message';
+    }
+  } else {
+    els.azureNsgAddForm.style.display = 'none';
+  }
+}
+
+function hideAzureNSGAddForm() {
+  if (els.azureNsgAddForm) {
+    els.azureNsgAddForm.style.display = 'none';
+  }
+}
+
+function handleAzureQuickPortClick(event) {
+  const btn = event.target.closest('.port-chip');
+  if (!btn) return;
+  const port = btn.dataset.port;
+  if (!port) return;
+
+  if (els.azRuleDestPort) els.azRuleDestPort.value = port;
+  if (els.azRuleProtocol) els.azRuleProtocol.value = (port === '*' ? '*' : 'Tcp');
+  if (els.azRuleName && (!els.azRuleName.value || els.azRuleName.value.startsWith('Allow-'))) {
+    const cleanPort = port.replace(/[,*]/g, '_');
+    els.azRuleName.value = `Allow-${cleanPort}`;
+  }
+}
+
+async function handleAzureNSGAddSubmit(event) {
+  event.preventDefault();
+  const account = selectedFirewallAccount?.account;
+  const nsg = currentAzureNSG;
+  if (!account || !nsg) return;
+
+  const name = els.azRuleName.value.trim();
+  const priority = parseInt(els.azRulePriority.value, 10) || 1000;
+  const access = els.azRuleAccess.value;
+  const protocol = els.azRuleProtocol.value;
+  const sourceAddressPrefix = els.azRuleSourceIp.value.trim() || '*';
+  const destinationPortRange = els.azRuleDestPort.value.trim();
+  const description = els.azRuleDesc.value.trim();
+
+  if (!name) {
+    showFormMessage(els.azureNsgFormMsg, '请输入规则名称', 'error');
+    return;
+  }
+  if (!destinationPortRange) {
+    showFormMessage(els.azureNsgFormMsg, '请输入目标端口', 'error');
+    return;
+  }
+
+  const payload = {
+    name,
+    priority,
+    direction: azureNSGDirection,
+    access,
+    protocol,
+    sourceAddressPrefix,
+    sourcePortRange: '*',
+    destinationAddressPrefix: '*',
+    destinationPortRange,
+    description
+  };
+
+  const submitBtn = els.azureNsgAddForm.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  showFormMessage(els.azureNsgFormMsg, '正在保存安全规则到 Azure...', 'info');
+
+  try {
+    const url = `/api/azure/${encodeURIComponent(account)}/security-groups/${encodeURIComponent(nsg.name)}/rules?resourceGroup=${encodeURIComponent(nsg.resourceGroup || '')}`;
+    await fetchJSON(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    });
+
+    addLog(`Azure 安全组 ${nsg.name} 规则 ${name} 添加成功。`, 'success');
+    hideAzureNSGAddForm();
+
+    // Re-fetch NSGs and refresh modal
+    const refreshData = await fetchJSON(`/api/azure/${encodeURIComponent(account)}/security-groups`);
+    currentAzureNSGs = Array.isArray(refreshData?.securityGroups) ? refreshData.securityGroups : [];
+    renderAzureNSGsTable(currentAzureNSGs);
+    const updatedNSG = currentAzureNSGs.find(n => n.name === nsg.name);
+    if (updatedNSG) {
+      currentAzureNSG = updatedNSG;
+      renderAzureNSGRulesList();
+    }
+  } catch (error) {
+    showFormMessage(els.azureNsgFormMsg, `添加规则失败: ${error.message}`, 'error');
+    addLog(`添加 Azure 安全规则失败: ${error.message}`, 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+function handleAzureRulesContainerClick(event) {
+  const delBtn = event.target.closest('.azure-rule-delete-btn');
+  if (!delBtn) return;
+  const ruleName = delBtn.dataset.name;
+  if (ruleName) deleteAzureNSGRule(ruleName);
+}
+
+async function deleteAzureNSGRule(ruleName) {
+  const account = selectedFirewallAccount?.account;
+  const nsg = currentAzureNSG;
+  if (!account || !nsg || !ruleName) return;
+
+  if (!confirm(`确定要删除 Azure NSG 安全规则 "${ruleName}" 吗？此操作不可撤销！`)) {
+    return;
+  }
+
+  addLog(`正在删除 Azure 安全组 ${nsg.name} 规则 ${ruleName}...`, 'info');
+
+  try {
+    const url = `/api/azure/${encodeURIComponent(account)}/security-groups/${encodeURIComponent(nsg.name)}/rules/${encodeURIComponent(ruleName)}?resourceGroup=${encodeURIComponent(nsg.resourceGroup || '')}`;
+    await fetchJSON(url, { method: 'DELETE' });
+
+    addLog(`Azure 安全组 ${nsg.name} 规则 ${ruleName} 已删除。`, 'success');
+
+    // Re-fetch NSGs and refresh modal
+    const refreshData = await fetchJSON(`/api/azure/${encodeURIComponent(account)}/security-groups`);
+    currentAzureNSGs = Array.isArray(refreshData?.securityGroups) ? refreshData.securityGroups : [];
+    renderAzureNSGsTable(currentAzureNSGs);
+    const updatedNSG = currentAzureNSGs.find(n => n.name === nsg.name);
+    if (updatedNSG) {
+      currentAzureNSG = updatedNSG;
+      renderAzureNSGRulesList();
+    }
+  } catch (error) {
+    addLog(`删除 Azure 安全规则失败: ${error.message}`, 'error');
+  }
 }
 
