@@ -61,9 +61,9 @@
             <i class="bi bi-globe"></i>
             <span>DNS 管理</span>
           </a>
-          <a href="#" class="nav-item" data-section="gcp-firewall" id="nav-gcp-firewall-btn">
-            <i class="bi bi-shield-lock"></i>
-            <span>GCP 防火墙</span>
+          <a href="#" class="nav-item" data-section="firewall" id="nav-firewall-btn">
+            <i class="bi bi-shield-check"></i>
+            <span>防火墙管理</span>
           </a>
           <a href="#" class="nav-item" data-section="settings">
             <i class="bi bi-sliders"></i>
@@ -361,30 +361,30 @@
           </div>
         </section>
 
-        <!-- GCP Firewall Management Section -->
-        <section id="gcp-firewall-section" class="section">
+        <!-- Multi-Cloud Firewall Management Section -->
+        <section id="firewall-section" class="section">
           <div class="section-title">
             <div>
-              <h2>GCP 防火墙管理</h2>
-              <p>管理 Google Cloud VPC 全局防火墙规则（入站/出站端口放行与拦截）。</p>
+              <h2>防火墙管理</h2>
+              <p>多云统一防火墙控制中心：GCP (VPC 全局防火墙)、OCI (安全列表 Security List)、Azure (网络安全组 NSG)。</p>
             </div>
             <div style="display: flex; gap: 10px;">
-              <button id="gcp-fw-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新规则</button>
-              <button id="gcp-fw-create-btn" class="primary-btn" type="button"><i class="bi bi-plus-lg"></i> 新建防火墙规则</button>
+              <button id="fw-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+              <button id="fw-create-btn" class="primary-btn" type="button"><i class="bi bi-plus-lg"></i> <span id="fw-create-btn-label">新建规则</span></button>
             </div>
           </div>
 
           <div class="settings-panel">
-            <div class="panel-heading" style="align-items: flex-end; justify-content: flex-start; gap: 20px; flex-wrap: wrap;">
-              <div class="field compact" style="max-width: 320px; margin-bottom: 0;">
-                <span>选择 GCP 账号</span>
-                <select id="gcp-fw-account-select"></select>
+            <div class="fw-account-bar">
+              <div class="fw-account-pills" id="fw-account-pills"></div>
+              <div class="field compact" style="max-width: 260px; margin-bottom: 0;">
+                <select id="fw-account-select" class="fw-account-select"></select>
               </div>
-              <div id="gcp-fw-account-meta" style="color: var(--muted); font-size: 13px; padding-bottom: 4px;"></div>
             </div>
+            <div id="fw-account-meta" style="color: var(--muted); font-size: 13px; margin-bottom: 12px;"></div>
 
-            <div id="gcp-fw-table-container" class="gcp-fw-table-container">
-              <div class="empty-state compact">正在读取 GCP 账号配置...</div>
+            <div id="fw-content-container" class="gcp-fw-table-container">
+              <div class="empty-state compact">正在读取多云账号防火墙配置...</div>
             </div>
           </div>
         </section>
@@ -677,6 +677,117 @@
           <button id="gcp-fw-modal-submit" class="primary-btn" type="submit">保存规则</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Azure NSG Management Modal -->
+  <div id="azure-nsg-modal" class="modal-overlay" hidden>
+    <div class="modal-panel azure-nsg-modal-panel">
+      <div class="modal-header">
+        <h3 id="azure-nsg-modal-title">Azure 网络安全组 (NSG) 规则管理</h3>
+        <button id="azure-nsg-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div style="padding: 10px 20px 0; display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+        <div class="sg-direction-tabs" role="tablist">
+          <button class="sg-direction-tab active" id="azure-nsg-tab-inbound" type="button">入站规则 (Inbound)</button>
+          <button class="sg-direction-tab" id="azure-nsg-tab-outbound" type="button">出站规则 (Outbound)</button>
+        </div>
+        <button id="azure-nsg-add-rule-btn" class="primary-btn" type="button"><i class="bi bi-plus-lg"></i> 添加规则</button>
+      </div>
+
+      <!-- Add Rule Inline Form -->
+      <form id="azure-nsg-add-form" class="settings-panel" style="margin: 12px 20px; display: none; background: var(--panel-soft);">
+        <div style="font-weight: 600; margin-bottom: 10px; font-size: 13px;">新建安全规则</div>
+        <div class="form-grid">
+          <label class="field">
+            <span>规则名称</span>
+            <input id="az-rule-name" type="text" required placeholder="例如 Allow-SSH">
+          </label>
+          <label class="field">
+            <span>优先级 (100 - 4096)</span>
+            <input id="az-rule-priority" type="number" min="100" max="4096" value="1000" required>
+          </label>
+        </div>
+        <div class="form-grid">
+          <label class="field">
+            <span>动作</span>
+            <select id="az-rule-access">
+              <option value="Allow" selected>Allow (允许)</option>
+              <option value="Deny">Deny (拒绝)</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>协议</span>
+            <select id="az-rule-protocol">
+              <option value="Tcp" selected>TCP</option>
+              <option value="Udp">UDP</option>
+              <option value="Icmp">ICMP</option>
+              <option value="*">Any (*)</option>
+            </select>
+          </label>
+        </div>
+        <div class="form-grid">
+          <label class="field">
+            <span>源地址前缀</span>
+            <input id="az-rule-source-ip" type="text" value="*" placeholder="* 或 1.2.3.4 或 10.0.0.0/24">
+          </label>
+          <label class="field">
+            <span>目标端口范围</span>
+            <input id="az-rule-dest-port" type="text" required placeholder="例如 22 或 80,443 或 8080-8090 或 *">
+          </label>
+        </div>
+        <div class="quick-port-chips" id="azure-quick-ports">
+          <span class="chip-label">快捷端口：</span>
+          <button type="button" class="port-chip" data-port="22">SSH (22)</button>
+          <button type="button" class="port-chip" data-port="80">HTTP (80)</button>
+          <button type="button" class="port-chip" data-port="443">HTTPS (443)</button>
+          <button type="button" class="port-chip" data-port="80,443">Web (80,443)</button>
+          <button type="button" class="port-chip" data-port="3389">RDP (3389)</button>
+          <button type="button" class="port-chip" data-port="*">全部端口 (*)</button>
+        </div>
+        <label class="field" style="margin-top: 10px;">
+          <span>说明描述 (选填)</span>
+          <input id="az-rule-desc" type="text" placeholder="例如 放行运维 SSH 访问">
+        </label>
+        <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
+          <button id="az-rule-cancel-btn" class="secondary-btn" type="button">取消</button>
+          <button id="az-rule-submit-btn" class="primary-btn" type="submit">保存规则</button>
+        </div>
+        <div id="azure-nsg-form-msg" class="form-message"></div>
+      </form>
+
+      <div class="modal-body" style="overflow-y: auto; max-height: 55vh; padding: 12px 20px;">
+        <div id="azure-nsg-rules-container">
+          <div class="empty-state compact">加载中...</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="azure-nsg-modal-done" class="primary-btn" type="button">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OCI Account Security List Modal -->
+  <div id="oci-account-sl-modal" class="modal-overlay" hidden>
+    <div class="modal-panel sg-modal-panel">
+      <div class="modal-header">
+        <h3 id="oci-acc-sl-modal-title">OCI 安全列表规则管理</h3>
+        <button id="oci-acc-sl-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="sg-toolbar" style="padding: 12px 20px;">
+        <div class="sg-direction-tabs" role="tablist">
+          <button class="sg-direction-tab active" id="oci-acc-sl-tab-ingress" type="button">入站规则 (Ingress)</button>
+          <button class="sg-direction-tab" id="oci-acc-sl-tab-egress" type="button">出站规则 (Egress)</button>
+        </div>
+      </div>
+      <div id="oci-acc-sl-modal-body" class="modal-body" style="padding: 0 20px 16px;">
+        <div class="empty-state compact">加载中...</div>
+      </div>
+      <div class="modal-footer">
+        <button id="oci-acc-sl-add" class="secondary-btn" type="button">+ 添加安全规则</button>
+        <button id="oci-acc-sl-save" class="primary-btn" type="button">保存安全列表规则</button>
+      </div>
+      <div id="oci-acc-sl-message" class="form-message"></div>
     </div>
   </div>
 

@@ -2645,3 +2645,112 @@ button {
   width: 95%;
 }
 
+/* Multi-Cloud Firewall Management Styles */
+.fw-account-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.fw-account-pills {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.fw-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--panel-soft);
+  border: 1px solid var(--panel-border);
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: var(--transition);
+}
+
+.fw-pill:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.fw-pill.active {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.3);
+}
+
+.prov-badge {
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.prov-badge.gcp {
+  background: rgba(234, 67, 53, 0.18);
+  color: #ea4335;
+}
+
+.prov-badge.oci {
+  background: rgba(248, 0, 0, 0.18);
+  color: #f80000;
+}
+
+.prov-badge.azure {
+  background: rgba(0, 120, 212, 0.18);
+  color: #0078d4;
+}
+
+.fw-pill.active .prov-badge {
+  background: rgba(255, 255, 255, 0.25);
+  color: #fff;
+}
+
+.azure-nsg-modal-panel {
+  max-width: 920px;
+  width: 95%;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.azure-nsg-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-top: 10px;
+}
+
+.azure-nsg-table th,
+.azure-nsg-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--panel-border);
+  text-align: left;
+  vertical-align: middle;
+}
+
+.azure-nsg-table th {
+  color: var(--muted);
+  font-weight: 600;
+  background: var(--panel-soft);
+  white-space: nowrap;
+}
+
+.azure-nsg-table tr:hover td {
+  background: var(--panel-soft);
+}
+
+
