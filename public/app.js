@@ -9,11 +9,15 @@ let proxyAccounts = [];
 
 const els = {};
 
+let currentGCPFirewalls = [];
+let selectedGCPFirewallAccount = null;
+
 document.addEventListener('DOMContentLoaded', () => {
   cacheElements();
   bindNavigation();
   bindActions();
   checkAuth();
+  fetchOverview();
 });
 
 function cacheElements() {
@@ -25,9 +29,39 @@ function cacheElements() {
     sidebarAccountsMenu: document.getElementById('sidebar-accounts-menu'),
     selectedAccount: document.getElementById('selected-account'),
     vmList: document.getElementById('vm-list'),
+    configCount: document.getElementById('config-count'),
+    configMeta: document.getElementById('config-meta'),
     vmCount: document.getElementById('vm-count'),
+    instanceMeta: document.getElementById('instance-meta'),
     runningCount: document.getElementById('running-count'),
+    runningMeta: document.getElementById('running-meta'),
     stoppedCount: document.getElementById('stopped-count'),
+    stoppedMeta: document.getElementById('stopped-meta'),
+    overviewRefreshBtn: document.getElementById('overview-refresh-btn'),
+    gcpFwAccountSelect: document.getElementById('gcp-fw-account-select'),
+    gcpFwAccountMeta: document.getElementById('gcp-fw-account-meta'),
+    gcpFwRefreshBtn: document.getElementById('gcp-fw-refresh-btn'),
+    gcpFwCreateBtn: document.getElementById('gcp-fw-create-btn'),
+    gcpFwTableContainer: document.getElementById('gcp-fw-table-container'),
+    gcpFwModal: document.getElementById('gcp-firewall-modal'),
+    gcpFwForm: document.getElementById('gcp-fw-form'),
+    gcpFwModalTitle: document.getElementById('gcp-fw-modal-title'),
+    gcpFwModalClose: document.getElementById('gcp-fw-modal-close'),
+    gcpFwModalCancel: document.getElementById('gcp-fw-modal-cancel'),
+    gcpFwModalMsg: document.getElementById('gcp-fw-modal-message'),
+    gcpFwName: document.getElementById('gcp-fw-name'),
+    gcpFwPriority: document.getElementById('gcp-fw-priority'),
+    gcpFwDirection: document.getElementById('gcp-fw-direction'),
+    gcpFwAction: document.getElementById('gcp-fw-action'),
+    gcpFwProtocol: document.getElementById('gcp-fw-protocol'),
+    gcpFwPorts: document.getElementById('gcp-fw-ports'),
+    gcpFwPortsGroup: document.getElementById('gcp-fw-ports-group'),
+    gcpFwIpRanges: document.getElementById('gcp-fw-ip-ranges'),
+    gcpFwIpLabel: document.getElementById('gcp-fw-ip-label'),
+    gcpFwTargetTags: document.getElementById('gcp-fw-target-tags'),
+    gcpFwDescription: document.getElementById('gcp-fw-description'),
+    gcpFwDisabled: document.getElementById('gcp-fw-disabled'),
+    gcpFwEditMode: document.getElementById('gcp-fw-edit-mode'),
     logs: document.getElementById('logs'),
     authForm: document.getElementById('auth-settings-form'),
     authEnabled: document.getElementById('auth-enabled'),
@@ -63,11 +97,19 @@ function bindNavigation() {
         loadConfigStatus();
         loadUpdateStatus();
       }
+      if (section === 'overview') {
+        fetchOverview();
+      }
       if (section === 'dns') {
         loadDNSPage();
       }
       if (section === 'proxies') {
         loadProxyPage();
+      }
+      if (section === 'gcp-firewall') {
+        if (currentGCPFirewalls.length === 0) {
+          fetchGCPFirewalls();
+        }
       }
     });
   });
@@ -75,6 +117,10 @@ function bindNavigation() {
 
 function bindActions() {
   els.logoutBtn.addEventListener('click', handleLogout);
+  els.overviewRefreshBtn?.addEventListener('click', () => {
+    fetchOverview();
+    addLog('已刷新概览统计。', 'info');
+  });
   document.getElementById('refresh-current-btn').addEventListener('click', refreshVMs);
   document.getElementById('clear-log-btn').addEventListener('click', clearLogs);
   document.getElementById('reload-config-btn').addEventListener('click', reloadConfig);
@@ -92,6 +138,48 @@ function bindActions() {
   document.getElementById('proxy-binding-account')?.addEventListener('change', applySelectedAccountBinding);
   document.getElementById('proxy-binding-primary')?.addEventListener('change', renderProxySelectors);
   document.getElementById('proxy-bindings-list')?.addEventListener('click', handleProxyBindingAction);
+
+  // GCP Firewall action bindings
+  els.gcpFwRefreshBtn?.addEventListener('click', () => fetchGCPFirewalls());
+  els.gcpFwCreateBtn?.addEventListener('click', () => openGCPFirewallModal(null));
+  els.gcpFwAccountSelect?.addEventListener('change', (e) => fetchGCPFirewalls(e.target.value));
+  els.gcpFwForm?.addEventListener('submit', handleGCPFirewallSubmit);
+  els.gcpFwModalClose?.addEventListener('click', closeGCPFirewallModal);
+  els.gcpFwModalCancel?.addEventListener('click', closeGCPFirewallModal);
+  els.gcpFwProtocol?.addEventListener('change', updateGCPProtocolUI);
+  els.gcpFwDirection?.addEventListener('change', updateGCPProtocolUI);
+
+  document.getElementById('gcp-quick-ports')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.port-chip');
+    if (!btn) return;
+    const port = btn.dataset.port;
+    if (port && els.gcpFwPorts) {
+      els.gcpFwPorts.value = port;
+    }
+  });
+
+  els.gcpFwTableContainer?.addEventListener('click', (e) => {
+    const editBtn = e.target.closest('.gcp-fw-edit-btn');
+    if (editBtn) {
+      const name = editBtn.dataset.name;
+      const rule = currentGCPFirewalls.find(r => r.name === name);
+      if (rule) openGCPFirewallModal(rule);
+      return;
+    }
+    const toggleBtn = e.target.closest('.gcp-fw-toggle-btn');
+    if (toggleBtn) {
+      const name = toggleBtn.dataset.name;
+      const disabled = toggleBtn.dataset.disabled === 'true';
+      toggleGCPFirewall(name, disabled);
+      return;
+    }
+    const deleteBtn = e.target.closest('.gcp-fw-delete-btn');
+    if (deleteBtn) {
+      const name = deleteBtn.dataset.name;
+      deleteGCPFirewall(name);
+      return;
+    }
+  });
   document.addEventListener('click', event => {
     // 1. Toggle for Level 2 (instances menu)
     const instToggle = event.target.closest('#instances-toggle-btn');
@@ -244,6 +332,8 @@ async function fetchAccounts() {
     proxyAccounts = accountsArr;
     renderAccounts(accountsArr);
     renderSidebarAccounts(accountsArr);
+    renderGCPFirewallAccounts(accountsArr);
+    fetchOverview();
   } catch (error) {
     els.accountList.innerHTML = `<div class="empty-state compact error">读取失败：${escapeHtml(error.message)}</div>`;
     addLog(`读取账号配置失败：${error.message}`, 'error');
@@ -341,11 +431,7 @@ async function fetchVMs() {
 }
 
 function updateStats(vms) {
-  const running = vms.filter(v => v.status === 'VM running').length;
-  const stopped = vms.filter(v => v.status === 'VM deallocated' || v.status === 'VM stopped').length;
-  els.vmCount.textContent = vms.length;
-  els.runningCount.textContent = running;
-  els.stoppedCount.textContent = stopped;
+  fetchOverview();
 }
 
 function renderVMList(vms) {
@@ -431,6 +517,7 @@ function renderVMCard(vm) {
         <button class="action-btn dns-bind" type="button" data-action="dns-bind">DNS 绑定</button>
         ${provider === 'oci' ? '<button class="action-btn edit" type="button" data-action="edit">编辑</button>' : ''}
         ${provider === 'oci' ? '<button class="action-btn security-list" type="button" data-action="security-list">安全规则</button>' : ''}
+        ${provider === 'gcp' ? '<button class="action-btn gcp-firewall" type="button" data-action="gcp-firewall">防火墙</button>' : ''}
       </div>
     </article>
   `;
@@ -465,6 +552,10 @@ async function handleVMAction(button) {
   }
   if (action === 'edit') {
     openOCIEditModal(vm);
+    return;
+  }
+  if (action === 'gcp-firewall') {
+    switchToGCPFirewall(vm.accountId);
     return;
   }
   if (action === 'start' && vm.status === 'VM running') {
@@ -2497,3 +2588,373 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+// ==========================================
+// Overview (Backend Cached Stats) Functions
+// ==========================================
+
+async function fetchOverview() {
+  try {
+    const data = await fetchJSON('/api/overview');
+    if (!data) return;
+
+    if (els.configCount) {
+      els.configCount.textContent = data.configCount ?? 0;
+    }
+    if (els.configMeta) {
+      const providers = data.providerCounts || {};
+      const parts = Object.entries(providers).map(([p, count]) => `${p.toUpperCase()}: ${count}`);
+      els.configMeta.textContent = parts.length > 0 ? parts.join(' / ') : '暂无配置';
+    }
+
+    if (els.vmCount) {
+      els.vmCount.textContent = data.instanceCount ?? 0;
+    }
+    if (els.instanceMeta) {
+      const cached = data.cachedAccountCount ?? 0;
+      const total = data.configCount ?? 0;
+      const timeStr = data.lastUpdatedAt ? `，更新于 ${data.lastUpdatedAt.slice(11)}` : '';
+      els.instanceMeta.textContent = `已缓存 ${cached}/${total} 个账号${timeStr}`;
+    }
+
+    if (els.runningCount) {
+      els.runningCount.textContent = data.runningCount ?? 0;
+    }
+    if (els.stoppedCount) {
+      els.stoppedCount.textContent = data.stoppedCount ?? 0;
+    }
+  } catch (error) {
+    console.error('获取概览统计失败:', error);
+  }
+}
+
+// ==========================================
+// GCP Firewall Management Functions
+// ==========================================
+
+function renderGCPFirewallAccounts(accounts) {
+  if (!els.gcpFwAccountSelect) return;
+  const gcpAccounts = accounts.filter(a => a.provider === 'gcp');
+  if (gcpAccounts.length === 0) {
+    els.gcpFwAccountSelect.innerHTML = '<option value="">无可用 GCP 账号</option>';
+    if (els.gcpFwTableContainer) {
+      els.gcpFwTableContainer.innerHTML = '<div class="empty-state compact">未检测到已配置的 GCP 账号。可在 config 配置文件中添加 GCP 账号。</div>';
+    }
+    return;
+  }
+
+  els.gcpFwAccountSelect.innerHTML = gcpAccounts.map(a => `
+    <option value="${escapeAttr(a.account)}">${escapeHtml(a.account)}${a.group ? ` (${escapeHtml(a.group)})` : ''}</option>
+  `).join('');
+
+  if (!selectedGCPFirewallAccount || !gcpAccounts.some(a => a.account === selectedGCPFirewallAccount)) {
+    selectedGCPFirewallAccount = gcpAccounts[0].account;
+  }
+  els.gcpFwAccountSelect.value = selectedGCPFirewallAccount;
+}
+
+async function fetchGCPFirewalls(account) {
+  if (!account) {
+    account = els.gcpFwAccountSelect?.value || selectedGCPFirewallAccount;
+  }
+  if (!account) return;
+  selectedGCPFirewallAccount = account;
+
+  if (els.gcpFwTableContainer) {
+    els.gcpFwTableContainer.innerHTML = '<div class="empty-state compact">正在加载 GCP 防火墙规则...</div>';
+  }
+  if (els.gcpFwAccountMeta) {
+    els.gcpFwAccountMeta.textContent = `当前账号：${account}`;
+  }
+
+  try {
+    const data = await fetchJSON(`/api/gcp/${encodeURIComponent(account)}/firewalls`);
+    currentGCPFirewalls = Array.isArray(data?.firewalls) ? data.firewalls : [];
+    renderGCPFirewallsTable(currentGCPFirewalls);
+    addLog(`已加载 GCP 账号 ${account} 的防火墙规则，共 ${currentGCPFirewalls.length} 条。`, 'info');
+  } catch (error) {
+    if (els.gcpFwTableContainer) {
+      els.gcpFwTableContainer.innerHTML = `<div class="empty-state compact error">加载规则失败：${escapeHtml(error.message)}</div>`;
+    }
+    addLog(`加载 GCP 防火墙规则失败：${error.message}`, 'error');
+  }
+}
+
+function renderGCPFirewallsTable(rules) {
+  if (!els.gcpFwTableContainer) return;
+  if (!rules || rules.length === 0) {
+    els.gcpFwTableContainer.innerHTML = '<div class="empty-state compact">当前 VPC 下暂无防火墙规则。</div>';
+    return;
+  }
+
+  const sorted = [...rules].sort((a, b) => (a.priority || 1000) - (b.priority || 1000) || (a.name || '').localeCompare(b.name || ''));
+
+  els.gcpFwTableContainer.innerHTML = `
+    <table class="gcp-fw-table">
+      <thead>
+        <tr>
+          <th>规则名称</th>
+          <th>优先级</th>
+          <th>方向</th>
+          <th>动作</th>
+          <th>协议与端口</th>
+          <th>IP 网段</th>
+          <th>目标标记 (Tags)</th>
+          <th>状态</th>
+          <th style="text-align: right;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sorted.map(renderGCPFirewallRow).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderGCPFirewallRow(rule) {
+  const isAllow = (rule.action || 'ALLOW').toUpperCase() === 'ALLOW';
+  const isIngress = (rule.direction || 'INGRESS').toUpperCase() === 'INGRESS';
+  const isEnabled = !rule.disabled;
+
+  const proto = rule.ipProtocol || 'tcp';
+  const portsStr = rule.ports && rule.ports.length ? `:${rule.ports.join(', ')}` : '';
+  const protoPorts = proto === 'all' ? '全部协议' : (proto + portsStr);
+
+  const ipRanges = isIngress 
+    ? (rule.sourceRanges?.length ? rule.sourceRanges.join(', ') : '0.0.0.0/0')
+    : (rule.destinationRanges?.length ? rule.destinationRanges.join(', ') : '0.0.0.0/0');
+
+  const tagsHtml = rule.targetTags && rule.targetTags.length
+    ? rule.targetTags.map(t => `<span class="fw-tag-pill">${escapeHtml(t)}</span>`).join('')
+    : '<span style="color: var(--muted); font-size: 11px;">全部实例</span>';
+
+  return `
+    <tr data-name="${escapeAttr(rule.name)}">
+      <td>
+        <strong style="color: var(--text);">${escapeHtml(rule.name)}</strong>
+        ${rule.description ? `<div style="color: var(--muted); font-size: 11px; margin-top: 2px;">${escapeHtml(rule.description)}</div>` : ''}
+      </td>
+      <td>${rule.priority ?? 1000}</td>
+      <td>
+        <span class="fw-badge ${isIngress ? 'fw-badge-ingress' : 'fw-badge-egress'}">
+          ${isIngress ? '入站' : '出站'}
+        </span>
+      </td>
+      <td>
+        <span class="fw-badge ${isAllow ? 'fw-badge-allow' : 'fw-badge-deny'}">
+          ${isAllow ? '允许' : '拒绝'}
+        </span>
+      </td>
+      <td><code>${escapeHtml(protoPorts)}</code></td>
+      <td><span style="font-family: monospace; font-size: 12px;">${escapeHtml(ipRanges)}</span></td>
+      <td>${tagsHtml}</td>
+      <td>
+        <span class="fw-status-badge ${isEnabled ? 'enabled' : 'disabled'}">
+          <i class="bi ${isEnabled ? 'bi-check-circle-fill' : 'bi-dash-circle'}"></i>
+          <span>${isEnabled ? '已启用' : '已禁用'}</span>
+        </span>
+      </td>
+      <td style="text-align: right;">
+        <div class="fw-actions-cell" style="justify-content: flex-end;">
+          <button class="ghost-btn gcp-fw-toggle-btn" type="button" data-name="${escapeAttr(rule.name)}" data-disabled="${rule.disabled ? 'true' : 'false'}" title="${isEnabled ? '禁用规则' : '启用规则'}">
+            <i class="bi ${isEnabled ? 'bi-pause-circle' : 'bi-play-circle'}"></i>
+            <span>${isEnabled ? '禁用' : '启用'}</span>
+          </button>
+          <button class="ghost-btn gcp-fw-edit-btn" type="button" data-name="${escapeAttr(rule.name)}" title="编辑规则">
+            <i class="bi bi-pencil"></i>
+            <span>编辑</span>
+          </button>
+          <button class="ghost-btn gcp-fw-delete-btn" type="button" data-name="${escapeAttr(rule.name)}" style="color: var(--red);" title="删除规则">
+            <i class="bi bi-trash"></i>
+          </button>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function openGCPFirewallModal(rule = null) {
+  if (!els.gcpFwModal) return;
+  els.gcpFwModal.hidden = false;
+  if (els.gcpFwModalMsg) {
+    els.gcpFwModalMsg.textContent = '';
+    els.gcpFwModalMsg.className = 'form-message';
+  }
+
+  if (rule) {
+    els.gcpFwEditMode.value = 'edit';
+    els.gcpFwModalTitle.textContent = `编辑 GCP 防火墙规则 - ${rule.name}`;
+    els.gcpFwName.value = rule.name;
+    els.gcpFwName.disabled = true;
+    els.gcpFwPriority.value = rule.priority ?? 1000;
+    els.gcpFwDirection.value = (rule.direction || 'INGRESS').toUpperCase();
+    els.gcpFwAction.value = (rule.action || 'ALLOW').toUpperCase();
+    els.gcpFwProtocol.value = rule.ipProtocol || 'tcp';
+    els.gcpFwPorts.value = rule.ports && rule.ports.length ? rule.ports.join(', ') : '';
+    const isIngress = (rule.direction || 'INGRESS').toUpperCase() === 'INGRESS';
+    els.gcpFwIpRanges.value = isIngress 
+      ? (rule.sourceRanges?.length ? rule.sourceRanges.join(', ') : '0.0.0.0/0')
+      : (rule.destinationRanges?.length ? rule.destinationRanges.join(', ') : '0.0.0.0/0');
+    els.gcpFwTargetTags.value = rule.targetTags && rule.targetTags.length ? rule.targetTags.join(', ') : '';
+    els.gcpFwDescription.value = rule.description || '';
+    els.gcpFwDisabled.checked = Boolean(rule.disabled);
+  } else {
+    els.gcpFwEditMode.value = 'create';
+    els.gcpFwModalTitle.textContent = '新建 GCP 防火墙规则';
+    els.gcpFwName.value = '';
+    els.gcpFwName.disabled = false;
+    els.gcpFwPriority.value = 1000;
+    els.gcpFwDirection.value = 'INGRESS';
+    els.gcpFwAction.value = 'ALLOW';
+    els.gcpFwProtocol.value = 'tcp';
+    els.gcpFwPorts.value = '';
+    els.gcpFwIpRanges.value = '0.0.0.0/0';
+    els.gcpFwTargetTags.value = '';
+    els.gcpFwDescription.value = '';
+    els.gcpFwDisabled.checked = false;
+  }
+  updateGCPProtocolUI();
+}
+
+function closeGCPFirewallModal() {
+  if (els.gcpFwModal) {
+    els.gcpFwModal.hidden = true;
+  }
+}
+
+function updateGCPProtocolUI() {
+  const proto = els.gcpFwProtocol?.value || 'tcp';
+  const showPorts = proto === 'tcp' || proto === 'udp';
+  if (els.gcpFwPortsGroup) {
+    els.gcpFwPortsGroup.style.display = showPorts ? '' : 'none';
+  }
+  const quickPorts = document.getElementById('gcp-quick-ports');
+  if (quickPorts) {
+    quickPorts.style.display = showPorts ? '' : 'none';
+  }
+  const isIngress = els.gcpFwDirection?.value === 'INGRESS';
+  if (els.gcpFwIpLabel) {
+    els.gcpFwIpLabel.innerHTML = isIngress 
+      ? '来源 IP 网段 <small style="color: var(--muted);">(默认 0.0.0.0/0)</small>'
+      : '目的 IP 网段 <small style="color: var(--muted);">(默认 0.0.0.0/0)</small>';
+  }
+}
+
+async function handleGCPFirewallSubmit(event) {
+  event.preventDefault();
+  const account = els.gcpFwAccountSelect?.value || selectedGCPFirewallAccount;
+  if (!account) {
+    showFormMessage(els.gcpFwModalMsg, '未选择 GCP 账号', 'error');
+    return;
+  }
+
+  const editMode = els.gcpFwEditMode.value;
+  const name = els.gcpFwName.value.trim();
+  const priority = parseInt(els.gcpFwPriority.value, 10) || 1000;
+  const direction = els.gcpFwDirection.value;
+  const action = els.gcpFwAction.value;
+  const protocol = els.gcpFwProtocol.value;
+  const rawPorts = els.gcpFwPorts.value.trim();
+  const ports = (protocol === 'tcp' || protocol === 'udp') && rawPorts
+    ? rawPorts.split(',').map(s => s.trim()).filter(Boolean)
+    : [];
+  const rawRanges = els.gcpFwIpRanges.value.trim();
+  const ranges = rawRanges ? rawRanges.split(',').map(s => s.trim()).filter(Boolean) : ['0.0.0.0/0'];
+  const rawTags = els.gcpFwTargetTags.value.trim();
+  const targetTags = rawTags ? rawTags.split(',').map(s => s.trim()).filter(Boolean) : [];
+  const description = els.gcpFwDescription.value.trim();
+  const disabled = els.gcpFwDisabled.checked;
+
+  const rulePayload = {
+    name,
+    priority,
+    direction,
+    action,
+    ipProtocol: protocol,
+    ports,
+    sourceRanges: direction === 'INGRESS' ? ranges : [],
+    destinationRanges: direction === 'EGRESS' ? ranges : [],
+    targetTags,
+    description,
+    disabled
+  };
+
+  const submitBtn = els.gcpFwModal.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  showFormMessage(els.gcpFwModalMsg, '正在保存防火墙规则到 GCP...', 'info');
+
+  try {
+    const url = editMode === 'edit'
+      ? `/api/gcp/${encodeURIComponent(account)}/firewalls/${encodeURIComponent(name)}`
+      : `/api/gcp/${encodeURIComponent(account)}/firewalls`;
+    const method = editMode === 'edit' ? 'PUT' : 'POST';
+
+    await fetchJSON(url, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(rulePayload)
+    });
+
+    addLog(`GCP 防火墙规则 ${name} ${editMode === 'edit' ? '修改' : '创建'}成功。`, 'success');
+    closeGCPFirewallModal();
+    await fetchGCPFirewalls(account);
+  } catch (error) {
+    showFormMessage(els.gcpFwModalMsg, `保存失败: ${error.message}`, 'error');
+    addLog(`保存 GCP 防火墙规则失败: ${error.message}`, 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function toggleGCPFirewall(name, currentlyDisabled) {
+  const account = selectedGCPFirewallAccount || els.gcpFwAccountSelect?.value;
+  if (!account) return;
+  const newDisabled = !currentlyDisabled;
+  const actionText = newDisabled ? '禁用' : '启用';
+  addLog(`正在${actionText} GCP 防火墙规则 ${name}...`, 'info');
+
+  try {
+    await fetchJSON(`/api/gcp/${encodeURIComponent(account)}/firewalls/${encodeURIComponent(name)}/toggle`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ disabled: newDisabled })
+    });
+    addLog(`GCP 防火墙规则 ${name} 已${actionText}。`, 'success');
+    await fetchGCPFirewalls(account);
+  } catch (error) {
+    addLog(`${actionText} GCP 防火墙规则失败: ${error.message}`, 'error');
+  }
+}
+
+async function deleteGCPFirewall(name) {
+  const account = selectedGCPFirewallAccount || els.gcpFwAccountSelect?.value;
+  if (!account) return;
+  if (!confirm(`确定要删除 GCP 防火墙规则 ${name} 吗？此操作不可撤销！`)) {
+    return;
+  }
+  addLog(`正在删除 GCP 防火墙规则 ${name}...`, 'info');
+
+  try {
+    await fetchJSON(`/api/gcp/${encodeURIComponent(account)}/firewalls/${encodeURIComponent(name)}`, {
+      method: 'DELETE'
+    });
+    addLog(`GCP 防火墙规则 ${name} 已删除。`, 'success');
+    await fetchGCPFirewalls(account);
+  } catch (error) {
+    addLog(`删除 GCP 防火墙规则失败: ${error.message}`, 'error');
+  }
+}
+
+function switchToGCPFirewall(account) {
+  document.querySelectorAll('.nav-item').forEach(i => {
+    i.classList.toggle('active', i.dataset.section === 'gcp-firewall');
+  });
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.getElementById('gcp-firewall-section')?.classList.add('active');
+  if (account && els.gcpFwAccountSelect) {
+    els.gcpFwAccountSelect.value = account;
+    selectedGCPFirewallAccount = account;
+  }
+  fetchGCPFirewalls(account);
+}
+
