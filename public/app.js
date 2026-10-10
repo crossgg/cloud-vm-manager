@@ -48,6 +48,8 @@ function cacheElements() {
     overviewRefreshBtn: document.getElementById('overview-refresh-btn'),
 
     // Multi-Cloud Firewall Management Elements
+    sidebarFirewallMenu: document.getElementById('sidebar-firewall-menu'),
+    firewallToggleBtn: document.getElementById('firewall-toggle-btn'),
     fwRefreshBtn: document.getElementById('fw-refresh-btn'),
     fwCreateBtn: document.getElementById('fw-create-btn'),
     fwCreateBtnLabel: document.getElementById('fw-create-btn-label'),
@@ -153,6 +155,14 @@ function bindNavigation() {
         loadProxyPage();
       }
       if (section === 'firewall' || section === 'gcp-firewall') {
+        const fwMenu = document.getElementById('sidebar-firewall-menu');
+        const fwToggle = document.getElementById('firewall-toggle-btn');
+        if (fwMenu && fwMenu.classList.contains('collapsed')) {
+          fwMenu.classList.remove('collapsed');
+          fwMenu.style.display = 'flex';
+          const icon = fwToggle?.querySelector('i');
+          if (icon) icon.className = 'bi bi-dash-lg';
+        }
         if (!selectedFirewallAccount) {
           initFirewallSection();
         } else {
@@ -272,7 +282,24 @@ function bindActions() {
       return;
     }
 
-    // 2. Toggle for Level 3 (group accounts)
+    // Toggle for Level 2 (firewall menu)
+    const fwToggle = event.target.closest('#firewall-toggle-btn');
+    if (fwToggle) {
+      event.stopPropagation();
+      event.preventDefault();
+      const menu = document.getElementById('sidebar-firewall-menu');
+      const icon = fwToggle.querySelector('i');
+      if (menu) {
+        const isCollapsed = menu.classList.toggle('collapsed');
+        menu.style.display = isCollapsed ? 'none' : 'flex';
+        if (icon) {
+          icon.className = isCollapsed ? 'bi bi-plus-lg' : 'bi bi-dash-lg';
+        }
+      }
+      return;
+    }
+
+    // 2. Toggle for Level 3 (group accounts in instances or firewall)
     const groupToggle = event.target.closest('.sub-nav-group-title .sub-nav-toggle');
     if (groupToggle) {
       event.stopPropagation();
@@ -297,7 +324,25 @@ function bindActions() {
       return;
     }
 
-    const accountBtn = event.target.closest('.account-pill, .sub-nav-account-item');
+    // Sub-nav Firewall Account Item Click
+    const fwAccountBtn = event.target.closest('.sub-nav-firewall-item');
+    if (fwAccountBtn) {
+      const provider = fwAccountBtn.dataset.provider;
+      const accountName = fwAccountBtn.dataset.account;
+
+      const fwNavBtn = document.getElementById('nav-firewall-btn');
+      if (fwNavBtn) {
+        document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+        fwNavBtn.classList.add('active');
+        document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+        document.getElementById('firewall-section')?.classList.add('active');
+      }
+
+      selectFirewallAccount(provider, accountName);
+      return;
+    }
+
+    const accountBtn = event.target.closest('.account-pill, .sub-nav-account-item:not(.sub-nav-firewall-item)');
     if (accountBtn) {
       const provider = accountBtn.dataset.provider;
       const accountName = accountBtn.dataset.account;
@@ -406,6 +451,7 @@ async function fetchAccounts() {
     proxyAccounts = accountsArr;
     renderAccounts(accountsArr);
     renderSidebarAccounts(accountsArr);
+    renderSidebarFirewallAccounts(accountsArr);
     renderFirewallAccounts(accountsArr);
     fetchOverview();
   } catch (error) {
@@ -467,6 +513,53 @@ function renderSidebarAccounts(accounts) {
             <span>${escapeHtml(account.account)}</span>
           </a>
         `).join('')}
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderSidebarFirewallAccounts(accounts) {
+  if (!els.sidebarFirewallMenu) return;
+  const fwAccounts = (accounts || []).filter(a => ['gcp', 'oci', 'azure'].includes((a.provider || '').toLowerCase()));
+  if (fwAccounts.length === 0) {
+    els.sidebarFirewallMenu.innerHTML = '';
+    return;
+  }
+
+  const groups = {};
+  fwAccounts.forEach(account => {
+    const groupName = account.group || account.provider;
+    if (!groups[groupName]) {
+      groups[groupName] = [];
+    }
+    groups[groupName].push(account);
+  });
+
+  els.sidebarFirewallMenu.innerHTML = Object.entries(groups).map(([groupName, groupAccounts]) => `
+    <div class="sub-nav-group collapsed">
+      <div class="sub-nav-group-title">
+        <span class="sub-nav-group-title-content">
+          <i class="bi bi-shield-check"></i>
+          <span>${escapeHtml(groupName)}</span>
+        </span>
+        <span class="sub-nav-toggle"><i class="bi bi-plus-lg"></i></span>
+      </div>
+      <div class="sub-nav-group-items" style="display: none;">
+        ${groupAccounts.map(account => {
+          const prov = (account.provider || '').toLowerCase();
+          const isSelected = selectedFirewallAccount &&
+            selectedFirewallAccount.provider.toLowerCase() === prov &&
+            selectedFirewallAccount.account === account.account;
+          return `
+            <a class="sub-nav-account-item sub-nav-firewall-item ${isSelected ? 'active' : ''}"
+              data-provider="${escapeAttr(prov)}"
+              data-account="${escapeAttr(account.account)}"
+              data-group="${escapeAttr(account.group || account.provider)}">
+              <i class="bi bi-shield"></i>
+              <span>${escapeHtml(account.account)}</span>
+            </a>
+          `;
+        }).join('')}
       </div>
     </div>
   `).join('');
@@ -2733,27 +2826,41 @@ function renderFirewallAccounts(accounts) {
     `;
   }).join('');
 
-  // Render select options
-  els.fwAccountSelect.innerHTML = firewallAccounts.map(a => {
+  // Render select options with placeholder
+  els.fwAccountSelect.innerHTML = '<option value="">-- 请选择要加载的云账号 --</option>' + firewallAccounts.map(a => {
     const prov = (a.provider || '').toLowerCase();
     const val = `${prov}:${a.account}`;
     return `<option value="${escapeAttr(val)}">[${prov.toUpperCase()}] ${escapeHtml(a.account)}${a.group ? ` (${escapeHtml(a.group)})` : ''}</option>`;
   }).join('');
 
-  // Pick initial account if needed
-  if (!selectedFirewallAccount || !firewallAccounts.some(a => a.provider.toLowerCase() === selectedFirewallAccount.provider.toLowerCase() && a.account === selectedFirewallAccount.account)) {
-    selectedFirewallAccount = {
-      provider: firewallAccounts[0].provider.toLowerCase(),
-      account: firewallAccounts[0].account,
-      group: firewallAccounts[0].group
-    };
+  // If previously selected account is no longer valid, clear selection
+  if (selectedFirewallAccount && !firewallAccounts.some(a => a.provider.toLowerCase() === selectedFirewallAccount.provider.toLowerCase() && a.account === selectedFirewallAccount.account)) {
+    selectedFirewallAccount = null;
   }
 
   syncFirewallAccountUI();
 }
 
 function syncFirewallAccountUI() {
-  if (!selectedFirewallAccount) return;
+  if (!selectedFirewallAccount) {
+    if (els.fwAccountSelect) els.fwAccountSelect.value = '';
+    if (els.fwAccountPills) {
+      els.fwAccountPills.querySelectorAll('.fw-pill').forEach(pill => pill.classList.remove('active'));
+    }
+    document.querySelectorAll('.sub-nav-firewall-item').forEach(el => el.classList.remove('active'));
+    if (els.fwAccountMeta) els.fwAccountMeta.innerHTML = '请选择要管理的云账号';
+    if (els.fwCreateBtn) els.fwCreateBtn.style.display = 'none';
+    if (els.fwContentContainer && !els.fwContentContainer.querySelector('table')) {
+      els.fwContentContainer.innerHTML = `
+        <div class="empty-state compact">
+          <i class="bi bi-shield-lock" style="font-size: 32px; display: block; margin-bottom: 8px; color: var(--muted);"></i>
+          未加载任何防火墙配置，请在左侧侧边栏展开列表或上方点击具体云账号按需加载
+        </div>
+      `;
+    }
+    return;
+  }
+
   const prov = selectedFirewallAccount.provider.toLowerCase();
   const acc = selectedFirewallAccount.account;
   const val = `${prov}:${acc}`;
@@ -2768,6 +2875,10 @@ function syncFirewallAccountUI() {
       pill.classList.toggle('active', match);
     });
   }
+
+  document.querySelectorAll('.sub-nav-firewall-item').forEach(el => {
+    el.classList.toggle('active', el.dataset.provider === prov && el.dataset.account === acc);
+  });
 
   const provNames = {
     gcp: 'Google Cloud (VPC 全局防火墙)',
@@ -2815,15 +2926,10 @@ function selectFirewallAccount(provider, account) {
 }
 
 function initFirewallSection() {
-  if (!selectedFirewallAccount && firewallAccounts.length > 0) {
-    selectedFirewallAccount = {
-      provider: firewallAccounts[0].provider.toLowerCase(),
-      account: firewallAccounts[0].account,
-      group: firewallAccounts[0].group
-    };
-    syncFirewallAccountUI();
+  syncFirewallAccountUI();
+  if (selectedFirewallAccount) {
+    fetchCurrentFirewalls();
   }
-  fetchCurrentFirewalls();
 }
 
 function switchToFirewall(provider, accountId) {
