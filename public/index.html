@@ -62,9 +62,13 @@
             <span>DNS 管理</span>
           </a>
           <a href="#" class="nav-item" data-section="firewall" id="nav-firewall-btn">
-            <i class="bi bi-shield-check"></i>
-            <span>防火墙管理</span>
+            <span class="nav-item-content">
+              <i class="bi bi-shield-check"></i>
+              <span>防火墙管理</span>
+            </span>
+            <span class="nav-toggle" id="firewall-toggle-btn"><i class="bi bi-plus-lg"></i></span>
           </a>
+          <div class="sub-nav-menu collapsed" id="sidebar-firewall-menu" style="display: none;"></div>
           <a href="#" class="nav-item" data-section="settings">
             <i class="bi bi-sliders"></i>
             <span>系统设置</span>
@@ -381,10 +385,14 @@
                 <select id="fw-account-select" class="fw-account-select"></select>
               </div>
             </div>
-            <div id="fw-account-meta" style="color: var(--muted); font-size: 13px; margin-bottom: 12px;"></div>
+            <div id="fw-account-meta" style="color: var(--muted); font-size: 13px; margin-bottom: 12px;">未选择账号（从左侧侧边栏或上方点击账号加载）</div>
 
             <div id="fw-content-container" class="gcp-fw-table-container">
-              <div class="empty-state compact">正在读取多云账号防火墙配置...</div>
+              <div class="empty-state compact">
+                <i class="bi bi-shield-check" style="font-size: 32px; display: block; margin-bottom: 8px; opacity: 0.6;"></i>
+                <strong>未加载任何防火墙配置</strong>
+                <p style="color: var(--muted); font-size: 13px; margin-top: 4px;">请在左侧侧边栏展开列表或上方点击具体云账号，按需加载其安全规则。</p>
+              </div>
             </div>
           </div>
         </section>
@@ -480,14 +488,14 @@
               <label class="field">
                 <span>下载加速源</span>
                 <select id="update-proxy-mode">
-                  <option value="">直连 GitHub</option>
-                  <option value="https://gh-proxy.com/" selected>gh-proxy.com</option>
-                  <option value="custom">自定义</option>
+                  <option value="" selected>默认直连 (GitHub)</option>
+                  <option value="https://gh-proxy.com/">内置加速 (https://gh-proxy.com/)</option>
+                  <option value="custom">自定义加速镜像</option>
                 </select>
               </label>
               <label id="update-custom-proxy-field" class="field" hidden>
-                <span>自定义加速源</span>
-                <input id="update-custom-proxy" type="text" placeholder="例如 https://gh-proxy.com/">
+                <span>自定义加速镜像</span>
+                <input id="update-custom-proxy" type="text" placeholder="例如 https://mirror.ghproxy.com/">
               </label>
               <div style="display: flex; gap: 10px; margin-bottom: 15px;">
                 <button id="save-update-proxy-btn" class="secondary-btn" type="button" style="flex: 1;">保存加速源</button>
