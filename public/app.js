@@ -231,6 +231,11 @@ function bindActions() {
   els.settingsAccountsList?.addEventListener('click', handleSettingsAccountsAction);
   document.getElementById('check-update-btn')?.addEventListener('click', () => loadUpdateStatus(true));
   document.getElementById('apply-update-btn')?.addEventListener('click', applyUpdate);
+  els.updateCurrentVersion?.addEventListener('click', (e) => {
+    if (e.target.closest('#reset-update-btn')) {
+      resetToBuiltinVersion();
+    }
+  });
   els.saveUpdateProxyBtn?.addEventListener('click', saveUpdateProxy);
   els.updateProxyMode?.addEventListener('change', updateProxyModeChanged);
   els.authForm.addEventListener('submit', saveAuthSettings);
@@ -1219,7 +1224,13 @@ async function loadUpdateStatus(isManual = false) {
     }
     const query = queryParts.length ? `?${queryParts.join('&')}` : '';
     const data = await fetchJSON(`/api/update/status${query}`);
-    els.updateCurrentVersion.textContent = data.currentVersion || '-';
+    let verHtml = escapeHtml(data.currentVersion || '-');
+    if (data.isRuntime) {
+      verHtml += ` <span class="fw-badge fw-badge-egress" style="margin-left: 6px; font-size: 11px; vertical-align: middle;">在线热更版</span> <button type="button" id="reset-update-btn" class="ghost-btn" style="padding: 2px 6px; font-size: 11px; margin-left: 4px; vertical-align: middle;" title="清除热更文件并恢复使用容器镜像内置版本"><i class="bi bi-arrow-counterclockwise"></i> 恢复镜像版</button>`;
+    } else if (data.currentVersion) {
+      verHtml += ` <span class="fw-badge fw-badge-ingress" style="margin-left: 6px; font-size: 11px; vertical-align: middle;">容器镜像版</span>`;
+    }
+    els.updateCurrentVersion.innerHTML = verHtml;
     applyDefaultUpdateProxy(data.downloadProxy || '');
     if (isManual) {
       els.updateLatestVersion.textContent = data.latestVersion || '-';
@@ -1255,6 +1266,23 @@ async function applyUpdate() {
     addLog('程序更新已安装，等待容器自动重启。', 'success');
   } catch (error) {
     els.updateMessage.textContent = `更新失败：${error.message}`;
+    els.updateMessage.className = 'form-message error';
+  }
+}
+
+async function resetToBuiltinVersion() {
+  if (!els.updateMessage) return;
+  if (!confirm('确认清除在线热更文件并恢复使用容器镜像内置版本？程序将平滑重启。')) return;
+  els.updateMessage.textContent = '正在恢复容器镜像内置版本并重启...';
+  els.updateMessage.className = 'form-message';
+  try {
+    const data = await fetchJSON('/api/update/reset', { method: 'POST' });
+    els.updateMessage.textContent = data.message || '已重置，程序正在重启...';
+    els.updateMessage.className = 'form-message success';
+    addLog('已清除在线热更文件，正在恢复使用容器镜像内置版本。', 'success');
+    setTimeout(() => location.reload(), 3000);
+  } catch (error) {
+    els.updateMessage.textContent = `重置失败：${error.message}`;
     els.updateMessage.className = 'form-message error';
   }
 }

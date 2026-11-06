@@ -1228,7 +1228,7 @@ button {
   text-transform: uppercase;
 }
 
-.field input,
+.field input:not([type="checkbox"]):not([type="radio"]),
 .field select,
 .dns-textarea {
   width: 100%;
@@ -1242,14 +1242,14 @@ button {
   transition: var(--transition);
 }
 
-.field input:focus,
+.field input:not([type="checkbox"]):not([type="radio"]):focus,
 .field select:focus,
 .dns-textarea:focus {
   border-color: var(--primary);
   box-shadow: 0 0 0 3px rgba(0, 242, 254, 0.15);
 }
 
-.field input:disabled {
+.field input:not([type="checkbox"]):not([type="radio"]):disabled {
   background: rgba(255, 255, 255, 0.05);
   color: var(--muted);
   cursor: not-allowed;
@@ -2863,7 +2863,9 @@ button {
 }
 
 .gcp-proto-mode-options .radio-label,
-.gcp-proto-header .checkbox-label {
+.gcp-proto-header .checkbox-label,
+.radio-label,
+.checkbox-label {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -2871,6 +2873,30 @@ button {
   user-select: none;
   font-size: 13px;
   color: var(--text);
+}
+
+.radio-label input[type="radio"],
+.checkbox-label input[type="checkbox"],
+.gcp-proto-section input[type="radio"],
+.gcp-proto-section input[type="checkbox"] {
+  width: 16px !important;
+  height: 16px !important;
+  min-width: 16px !important;
+  min-height: 16px !important;
+  max-width: 16px !important;
+  max-height: 16px !important;
+  flex-shrink: 0 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  cursor: pointer;
+  accent-color: var(--primary);
+  vertical-align: middle;
+}
+
+.checkbox-label strong,
+.checkbox-label span,
+.radio-label span {
+  white-space: nowrap;
 }
 
 .gcp-proto-custom-container {

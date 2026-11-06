@@ -2,14 +2,24 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/crossgg/cloud-vm-manager/internal/auth"
 	"github.com/crossgg/cloud-vm-manager/internal/cache"
 	"github.com/crossgg/cloud-vm-manager/internal/config"
 	"github.com/crossgg/cloud-vm-manager/internal/server"
+	"github.com/crossgg/cloud-vm-manager/internal/updater"
 )
 
 func main() {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "-v", "--version", "-version", "version":
+			fmt.Println(updater.Version)
+			return
+		}
+	}
+
 	cfg, configPath, err := config.LoadConfigWithPath()
 	if err != nil {
 		fmt.Printf("load config failed: %v\n", err)
