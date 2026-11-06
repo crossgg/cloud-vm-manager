@@ -44,6 +44,7 @@ type UpdateInfo struct {
 	UpdateAvailable bool   `json:"updateAvailable"`
 	AssetName       string `json:"assetName,omitempty"`
 	RuntimePath     string `json:"runtimePath"`
+	IsRuntime       bool   `json:"isRuntime"`
 	ReleaseURL      string `json:"releaseUrl,omitempty"`
 	DownloadProxy   string `json:"downloadProxy,omitempty"`
 	CheckError      string `json:"checkError,omitempty"`
@@ -180,6 +181,11 @@ func InstallReleaseAsset(release GithubRelease, asset GithubReleaseAsset, downlo
 	}
 	if publicReplacement != nil {
 		_ = publicReplacement.Commit()
+	}
+
+	// Update base image ID marker so launcher knows this runtime binary was installed on this container
+	if imageIDBytes, readErr := os.ReadFile("/app/.image_id"); readErr == nil {
+		_ = os.WriteFile(filepath.Join(filepath.Dir(RuntimeBinPath), ".base_image_id"), imageIDBytes, 0o644)
 	}
 
 	return nil

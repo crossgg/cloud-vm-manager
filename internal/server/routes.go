@@ -25,6 +25,7 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 	// Update
 	r.GET("/api/update/status", getUpdateStatus)
 	r.POST("/api/update/apply", applyUpdate)
+	r.POST("/api/update/reset", resetUpdate)
 
 	// Settings
 	r.GET("/api/settings/auth", getAuthSettings)

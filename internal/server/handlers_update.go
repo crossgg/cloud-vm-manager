@@ -4,6 +4,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -16,6 +17,12 @@ func getUpdateStatus(c *gin.Context) {
 		CurrentVersion: updater.Version,
 		RuntimePath:    updater.RuntimeBinPath,
 		DownloadProxy:  defaultDownloadProxy(),
+	}
+
+	if exe, err := os.Executable(); err == nil {
+		info.IsRuntime = strings.Contains(filepath.ToSlash(exe), "/runtime/")
+	} else if fi, err := os.Stat(updater.RuntimeBinPath); err == nil && !fi.IsDir() {
+		info.IsRuntime = true
 	}
 
 	if c.Query("check") == "true" {
@@ -75,3 +82,22 @@ func defaultDownloadProxy() string {
 	}
 	return strings.TrimSpace(os.Getenv("UPDATE_DOWNLOAD_PROXY"))
 }
+
+func resetUpdate(c *gin.Context) {
+	runtimeBin := updater.RuntimeBinPath
+	_ = os.Remove(runtimeBin)
+	_ = os.Remove(runtimeBin + ".corrupted")
+	_ = os.RemoveAll(RuntimePublicDir)
+	_ = os.Remove(filepath.Join(filepath.Dir(runtimeBin), ".base_image_id"))
+
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"message": "已清除 runtime 运行缓存，正在平滑重启并切换回镜像内置版本...",
+	})
+
+	go func() {
+		time.Sleep(500 * time.Millisecond)
+		os.Exit(0)
+	}()
+}
+
