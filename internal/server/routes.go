@@ -33,6 +33,10 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 
 	// Accounts & Proxies
 	r.GET("/api/accounts", listAccounts)
+	r.GET("/api/accounts/:provider/:account", getAccountDetail)
+	r.POST("/api/accounts", saveAccount)
+	r.DELETE("/api/accounts/:provider/:account", deleteAccount)
+	r.POST("/api/config/upload-key", uploadKeyFile)
 	r.GET("/api/proxies", listProxies)
 	r.POST("/api/proxies", createProxy)
 	r.POST("/api/proxies/import", importProxies)

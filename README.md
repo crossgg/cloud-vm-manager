@@ -1,6 +1,6 @@
 # Cloud VM Manager
 
-![界面示例](pic/示例.jpg)
+![界面示例](docs/pic/示例.jpg)
 
 一个轻量级网页工具，用于管理 Azure、GCP、OCI 虚拟机实例。
 
@@ -34,7 +34,20 @@ config/                  # 配置目录（Docker 映射 /app/config）
 └── keys/                # 密钥文件目录
     ├── gcp01.pem
     └── oci.pem
+docs/                    # 说明文档与媒体资源
+├── azure-config-guide.md # Azure 凭据获取指南
+├── oci-config-guide.md   # OCI 凭据获取指南
+├── gcp-config-guide.md   # GCP 凭据获取指南
+└── pic/                 # 界面截图与示例资源
 ```
+
+## 云厂商配置指南
+
+关于各云服务商的 API 认证凭据、密钥生成与详细配置获取方法，请参阅对应文档：
+
+- 📘 [Azure (微软云) 配置获取指南](docs/azure-config-guide.md)
+- 📙 [Oracle Cloud (OCI 甲骨文云) 配置获取指南](docs/oci-config-guide.md)
+- 📗 [Google Cloud (GCP 谷歌云) 配置获取指南](docs/gcp-config-guide.md)
 
 ## 本地运行
 

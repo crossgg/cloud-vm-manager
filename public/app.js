@@ -69,9 +69,17 @@ function cacheElements() {
     gcpFwPriority: document.getElementById('gcp-fw-priority'),
     gcpFwDirection: document.getElementById('gcp-fw-direction'),
     gcpFwAction: document.getElementById('gcp-fw-action'),
-    gcpFwProtocol: document.getElementById('gcp-fw-protocol'),
-    gcpFwPorts: document.getElementById('gcp-fw-ports'),
-    gcpFwPortsGroup: document.getElementById('gcp-fw-ports-group'),
+    gcpProtoModeCustom: document.getElementById('gcp-proto-mode-custom'),
+    gcpProtoModeAll: document.getElementById('gcp-proto-mode-all'),
+    gcpProtoCustomContainer: document.getElementById('gcp-proto-custom-container'),
+    gcpProtoCheckTcp: document.getElementById('gcp-proto-check-tcp'),
+    gcpProtoTcpPorts: document.getElementById('gcp-proto-tcp-ports'),
+    gcpProtoCheckUdp: document.getElementById('gcp-proto-check-udp'),
+    gcpProtoUdpPorts: document.getElementById('gcp-proto-udp-ports'),
+    gcpProtoCheckIcmp: document.getElementById('gcp-proto-check-icmp'),
+    gcpProtoCheckOther: document.getElementById('gcp-proto-check-other'),
+    gcpProtoOtherName: document.getElementById('gcp-proto-other-name'),
+    gcpProtoOtherPorts: document.getElementById('gcp-proto-other-ports'),
     gcpFwIpRanges: document.getElementById('gcp-fw-ip-ranges'),
     gcpFwIpLabel: document.getElementById('gcp-fw-ip-label'),
     gcpFwTargetTags: document.getElementById('gcp-fw-target-tags'),
@@ -127,7 +135,23 @@ function cacheElements() {
     updateCustomProxy: document.getElementById('update-custom-proxy'),
     updateCustomProxyField: document.getElementById('update-custom-proxy-field'),
     updateMessage: document.getElementById('update-message'),
-    saveUpdateProxyBtn: document.getElementById('save-update-proxy-btn')
+    saveUpdateProxyBtn: document.getElementById('save-update-proxy-btn'),
+
+    // Cloud Account Management Elements
+    addAccountBtn: document.getElementById('add-account-btn'),
+    settingsAccountsList: document.getElementById('settings-accounts-list'),
+    accountModal: document.getElementById('account-modal'),
+    accountForm: document.getElementById('account-form'),
+    accountModalTitle: document.getElementById('account-modal-title'),
+    accountModalClose: document.getElementById('account-modal-close'),
+    accountModalCancel: document.getElementById('account-modal-cancel'),
+    accountModalMsg: document.getElementById('account-modal-message'),
+    accProvider: document.getElementById('acc-provider'),
+    accName: document.getElementById('acc-name'),
+    accGroup: document.getElementById('acc-group'),
+    accountEditMode: document.getElementById('account-edit-mode'),
+    accountOriginalName: document.getElementById('account-original-name'),
+    keyFileHiddenInput: document.getElementById('key-file-hidden-input')
   });
 }
 
@@ -182,6 +206,29 @@ function bindActions() {
   document.getElementById('refresh-current-btn').addEventListener('click', refreshVMs);
   document.getElementById('clear-log-btn').addEventListener('click', clearLogs);
   document.getElementById('reload-config-btn').addEventListener('click', reloadConfig);
+
+  // Cloud Account Management bindings
+  els.addAccountBtn?.addEventListener('click', () => openAccountModal(null));
+  els.accountModalClose?.addEventListener('click', closeAccountModal);
+  els.accountModalCancel?.addEventListener('click', closeAccountModal);
+  els.accountForm?.addEventListener('submit', handleAccountFormSubmit);
+  els.accProvider?.addEventListener('change', () => updateAccountProviderFields());
+  document.getElementById('account-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'account-modal') closeAccountModal();
+  });
+  document.addEventListener('click', (e) => {
+    const btn = e.target.closest('.upload-key-btn');
+    if (btn) {
+      const targetId = btn.dataset.target;
+      if (els.keyFileHiddenInput) {
+        els.keyFileHiddenInput.dataset.targetInput = targetId;
+        els.keyFileHiddenInput.value = '';
+        els.keyFileHiddenInput.click();
+      }
+    }
+  });
+  els.keyFileHiddenInput?.addEventListener('change', handleKeyFileUpload);
+  els.settingsAccountsList?.addEventListener('click', handleSettingsAccountsAction);
   document.getElementById('check-update-btn')?.addEventListener('click', () => loadUpdateStatus(true));
   document.getElementById('apply-update-btn')?.addEventListener('click', applyUpdate);
   els.saveUpdateProxyBtn?.addEventListener('click', saveUpdateProxy);
@@ -210,16 +257,46 @@ function bindActions() {
   els.gcpFwForm?.addEventListener('submit', handleGCPFirewallSubmit);
   els.gcpFwModalClose?.addEventListener('click', closeGCPFirewallModal);
   els.gcpFwModalCancel?.addEventListener('click', closeGCPFirewallModal);
-  els.gcpFwProtocol?.addEventListener('change', updateGCPProtocolUI);
   els.gcpFwDirection?.addEventListener('change', updateGCPProtocolUI);
 
-  document.getElementById('gcp-quick-ports')?.addEventListener('click', (e) => {
+  // GCP Protocol mode toggle (custom vs all)
+  document.querySelectorAll('input[name="gcp-proto-mode"]').forEach(radio => {
+    radio.addEventListener('change', updateGCPProtocolUI);
+  });
+
+  // GCP Protocol checkboxes toggle
+  ['tcp', 'udp', 'icmp', 'other'].forEach(proto => {
+    const chk = document.getElementById(`gcp-proto-check-${proto}`);
+    chk?.addEventListener('change', () => {
+      const item = document.getElementById(`gcp-proto-item-${proto}`);
+      const body = document.getElementById(`gcp-proto-body-${proto}`);
+      if (item) item.classList.toggle('active', chk.checked);
+      if (body) body.style.display = chk.checked ? '' : 'none';
+    });
+  });
+
+  // Quick chips inside GCP custom protocol container
+  els.gcpProtoCustomContainer?.addEventListener('click', (e) => {
     const btn = e.target.closest('.port-chip');
     if (!btn) return;
+    const chipsGroup = btn.closest('.quick-port-chips');
+    const targetId = chipsGroup?.dataset?.target;
+    if (!targetId) return;
+    const targetInput = document.getElementById(targetId);
+    if (!targetInput) return;
     const port = btn.dataset.port;
-    if (port && els.gcpFwPorts) {
-      els.gcpFwPorts.value = port;
+    if (!port) return;
+
+    const currentVal = targetInput.value.trim();
+    if (!currentVal) {
+      targetInput.value = port;
+    } else {
+      const existing = currentVal.split(',').map(s => s.trim());
+      if (!existing.includes(port)) {
+        targetInput.value = currentVal + ', ' + port;
+      }
     }
+    targetInput.focus();
   });
 
   // Azure NSG Modal bindings
@@ -453,6 +530,7 @@ async function fetchAccounts() {
     renderSidebarAccounts(accountsArr);
     renderSidebarFirewallAccounts(accountsArr);
     renderFirewallAccounts(accountsArr);
+    renderSettingsAccounts(accountsArr);
     fetchOverview();
   } catch (error) {
     els.accountList.innerHTML = `<div class="empty-state compact error">读取失败：${escapeHtml(error.message)}</div>`;
@@ -846,6 +924,278 @@ async function loadConfigStatus() {
     els.configStatus.textContent = data.lastReloadError ? `失败：${data.lastReloadError}` : '正常，等待手动重载';
   } catch (error) {
     els.configStatus.textContent = `读取失败：${error.message}`;
+  }
+}
+
+// ------------------------------------------
+// Cloud Account Management Functions
+// ------------------------------------------
+function renderSettingsAccounts(accounts) {
+  if (!els.settingsAccountsList) return;
+  if (!accounts || accounts.length === 0) {
+    els.settingsAccountsList.innerHTML = '<div class="empty-state compact">当前暂未配置任何云账号，点击上方「+ 添加云账号」开始配置。</div>';
+    return;
+  }
+
+  els.settingsAccountsList.innerHTML = accounts.map(acc => {
+    const prov = (acc.provider || '').toLowerCase();
+    const name = acc.account;
+    const group = acc.group || prov;
+    return `
+      <div class="account-manage-card" data-provider="${escapeAttr(prov)}" data-account="${escapeAttr(name)}">
+        <div class="account-manage-info">
+          <span class="prov-badge ${escapeAttr(prov)}">${escapeHtml(prov.toUpperCase())}</span>
+          <span class="account-manage-name">${escapeHtml(name)}</span>
+          <span class="account-manage-meta">分组: <code>${escapeHtml(group)}</code></span>
+        </div>
+        <div class="account-manage-actions">
+          <button class="ghost-btn account-edit-btn" type="button" data-provider="${escapeAttr(prov)}" data-account="${escapeAttr(name)}" title="编辑此账号">
+            <i class="bi bi-pencil"></i>
+            <span>编辑</span>
+          </button>
+          <button class="ghost-btn account-delete-btn" type="button" data-provider="${escapeAttr(prov)}" data-account="${escapeAttr(name)}" style="color: var(--red);" title="从配置文件中删除">
+            <i class="bi bi-trash"></i>
+            <span>删除</span>
+          </button>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+async function handleSettingsAccountsAction(event) {
+  const editBtn = event.target.closest('.account-edit-btn');
+  if (editBtn) {
+    const provider = editBtn.dataset.provider;
+    const account = editBtn.dataset.account;
+    await openAccountModal({ provider, account });
+    return;
+  }
+
+  const delBtn = event.target.closest('.account-delete-btn');
+  if (delBtn) {
+    const provider = delBtn.dataset.provider;
+    const account = delBtn.dataset.account;
+    await deleteAccountHandler(provider, account);
+    return;
+  }
+}
+
+async function openAccountModal(accountData = null) {
+  if (!els.accountModal) return;
+  els.accountModal.hidden = false;
+  if (els.accountModalMsg) {
+    els.accountModalMsg.textContent = '';
+    els.accountModalMsg.className = 'form-message';
+  }
+
+  if (accountData) {
+    els.accountEditMode.value = 'edit';
+    els.accountOriginalName.value = accountData.account;
+    els.accountModalTitle.textContent = `编辑云账号 - [${accountData.provider.toUpperCase()}] ${accountData.account}`;
+    els.accProvider.value = accountData.provider.toLowerCase();
+    els.accProvider.disabled = true;
+    els.accName.value = accountData.account;
+    updateAccountProviderFields(accountData.provider.toLowerCase());
+
+    try {
+      if (els.accountModalMsg) {
+        els.accountModalMsg.textContent = '正在读取账号配置详情...';
+        els.accountModalMsg.className = 'form-message';
+      }
+      const data = await fetchJSON(`/api/accounts/${encodeURIComponent(accountData.provider)}/${encodeURIComponent(accountData.account)}`);
+      els.accGroup.value = data.group || '';
+      const f = data.fields || {};
+      if (accountData.provider === 'azure') {
+        if (document.getElementById('acc-az-sub')) document.getElementById('acc-az-sub').value = f.subscription_id || '';
+        if (document.getElementById('acc-az-tenant')) document.getElementById('acc-az-tenant').value = f.tenant_id || '';
+        if (document.getElementById('acc-az-client-id')) document.getElementById('acc-az-client-id').value = f.client_id || '';
+        if (document.getElementById('acc-az-client-secret')) document.getElementById('acc-az-client-secret').value = f.client_secret || '';
+        if (document.getElementById('acc-az-rg')) document.getElementById('acc-az-rg').value = f.resource_group || '';
+        if (document.getElementById('acc-az-location')) document.getElementById('acc-az-location').value = f.location || '';
+      } else if (accountData.provider === 'oci') {
+        if (document.getElementById('acc-oci-user')) document.getElementById('acc-oci-user').value = f.user || '';
+        if (document.getElementById('acc-oci-fingerprint')) document.getElementById('acc-oci-fingerprint').value = f.fingerprint || '';
+        if (document.getElementById('acc-oci-tenancy')) document.getElementById('acc-oci-tenancy').value = f.tenancy || '';
+        if (document.getElementById('acc-oci-compartment')) document.getElementById('acc-oci-compartment').value = f.compartment_id || '';
+        if (document.getElementById('acc-oci-region')) document.getElementById('acc-oci-region').value = f.region || '';
+        if (document.getElementById('acc-oci-key-file')) document.getElementById('acc-oci-key-file').value = f.key_file || '';
+      } else if (accountData.provider === 'gcp') {
+        if (document.getElementById('acc-gcp-project')) document.getElementById('acc-gcp-project').value = f.project_id || '';
+        if (document.getElementById('acc-gcp-email')) document.getElementById('acc-gcp-email').value = f.client_email || '';
+        if (document.getElementById('acc-gcp-key-file')) document.getElementById('acc-gcp-key-file').value = f.key_file || '';
+      }
+      if (els.accountModalMsg) {
+        els.accountModalMsg.textContent = '';
+        els.accountModalMsg.className = 'form-message';
+      }
+    } catch (err) {
+      if (els.accountModalMsg) {
+        els.accountModalMsg.textContent = `获取详情失败：${err.message}`;
+        els.accountModalMsg.className = 'form-message error';
+      }
+    }
+  } else {
+    els.accountEditMode.value = 'create';
+    els.accountOriginalName.value = '';
+    els.accountModalTitle.textContent = '添加云账号';
+    els.accProvider.disabled = false;
+    els.accProvider.value = 'azure';
+    els.accName.value = '';
+    els.accGroup.value = '';
+
+    document.querySelectorAll('#account-modal input:not([type="hidden"]):not([type="submit"]):not([type="button"])').forEach(input => {
+      input.value = '';
+    });
+    updateAccountProviderFields('azure');
+  }
+}
+
+function closeAccountModal() {
+  if (els.accountModal) {
+    els.accountModal.hidden = true;
+  }
+}
+
+function updateAccountProviderFields(prov = null) {
+  const provider = prov || els.accProvider?.value || 'azure';
+  document.querySelectorAll('.acc-provider-fields').forEach(el => el.style.display = 'none');
+  const target = document.getElementById(`acc-fields-${provider}`);
+  if (target) {
+    target.style.display = 'block';
+  }
+}
+
+async function handleKeyFileUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  const targetInputId = event.target.dataset.targetInput;
+  const targetInput = document.getElementById(targetInputId);
+
+  const formData = new FormData();
+  formData.append('keyFile', file);
+
+  if (els.accountModalMsg) {
+    els.accountModalMsg.textContent = `正在上传密钥文件 ${file.name}...`;
+    els.accountModalMsg.className = 'form-message';
+  }
+
+  try {
+    const response = await fetch(`${API_BASE}/api/config/upload-key`, {
+      method: 'POST',
+      body: formData
+    });
+    const data = await response.json();
+    if (!response.ok || data.error) {
+      throw new Error(data.error || '上传密钥失败');
+    }
+
+    if (targetInput) {
+      targetInput.value = data.path;
+    }
+    if (els.accountModalMsg) {
+      els.accountModalMsg.textContent = `密钥文件已安全存入 ${data.path}`;
+      els.accountModalMsg.className = 'form-message success';
+    }
+    addLog(`密钥文件已上传: ${data.path}`, 'success');
+  } catch (err) {
+    if (els.accountModalMsg) {
+      els.accountModalMsg.textContent = `上传失败: ${err.message}`;
+      els.accountModalMsg.className = 'form-message error';
+    }
+    addLog(`上传密钥文件失败: ${err.message}`, 'error');
+  }
+}
+
+async function handleAccountFormSubmit(event) {
+  event.preventDefault();
+  const provider = els.accProvider.value;
+  const account = els.accName.value.trim();
+  const originalAccount = els.accountOriginalName.value.trim();
+  const group = els.accGroup.value.trim();
+  const editMode = els.accountEditMode.value;
+
+  if (!account) {
+    if (els.accountModalMsg) {
+      els.accountModalMsg.textContent = '请输入账号标识名称';
+      els.accountModalMsg.className = 'form-message error';
+    }
+    return;
+  }
+
+  const fields = {};
+  if (group) fields.group = group;
+
+  if (provider === 'azure') {
+    fields.subscription_id = document.getElementById('acc-az-sub')?.value.trim() || '';
+    fields.tenant_id = document.getElementById('acc-az-tenant')?.value.trim() || '';
+    fields.client_id = document.getElementById('acc-az-client-id')?.value.trim() || '';
+    fields.client_secret = document.getElementById('acc-az-client-secret')?.value.trim() || '';
+    fields.resource_group = document.getElementById('acc-az-rg')?.value.trim() || '';
+    fields.location = document.getElementById('acc-az-location')?.value.trim() || '';
+  } else if (provider === 'oci') {
+    fields.user = document.getElementById('acc-oci-user')?.value.trim() || '';
+    fields.fingerprint = document.getElementById('acc-oci-fingerprint')?.value.trim() || '';
+    fields.tenancy = document.getElementById('acc-oci-tenancy')?.value.trim() || '';
+    fields.compartment_id = document.getElementById('acc-oci-compartment')?.value.trim() || '';
+    fields.region = document.getElementById('acc-oci-region')?.value.trim() || '';
+    fields.key_file = document.getElementById('acc-oci-key-file')?.value.trim() || '';
+  } else if (provider === 'gcp') {
+    fields.project_id = document.getElementById('acc-gcp-project')?.value.trim() || '';
+    fields.client_email = document.getElementById('acc-gcp-email')?.value.trim() || '';
+    fields.key_file = document.getElementById('acc-gcp-key-file')?.value.trim() || '';
+  }
+
+  const submitBtn = els.accountForm.querySelector('button[type="submit"]');
+  if (submitBtn) submitBtn.disabled = true;
+  if (els.accountModalMsg) {
+    els.accountModalMsg.textContent = '正在保存并热重载配置...';
+    els.accountModalMsg.className = 'form-message';
+  }
+
+  try {
+    const res = await fetchJSON('/api/accounts', {
+      method: 'POST',
+      body: {
+        provider,
+        account,
+        originalAccount: editMode === 'edit' ? originalAccount : '',
+        group,
+        fields
+      }
+    });
+
+    addLog(res.message || `云账号 ${account} 保存成功。`, 'success');
+    closeAccountModal();
+    await fetchAccounts();
+    loadConfigStatus();
+  } catch (err) {
+    if (els.accountModalMsg) {
+      els.accountModalMsg.textContent = `保存失败: ${err.message}`;
+      els.accountModalMsg.className = 'form-message error';
+    }
+    addLog(`保存云账号失败: ${err.message}`, 'error');
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+async function deleteAccountHandler(provider, account) {
+  if (!confirm(`确定要从配置文件中彻底删除云账号 [${provider.toUpperCase()}] ${account} 吗？\n删除后将立即热重载生效！`)) {
+    return;
+  }
+  addLog(`正在删除云账号 [${provider}] ${account}...`, 'info');
+
+  try {
+    const res = await fetchJSON(`/api/accounts/${encodeURIComponent(provider)}/${encodeURIComponent(account)}`, {
+      method: 'DELETE'
+    });
+    addLog(res.message || `云账号 ${account} 已删除。`, 'success');
+    await fetchAccounts();
+    loadConfigStatus();
+  } catch (err) {
+    addLog(`删除云账号失败: ${err.message}`, 'error');
+    alert(`删除失败: ${err.message}`);
   }
 }
 
@@ -1338,7 +1688,7 @@ async function fetchJSON(path, options = {}) {
 
   if (options.body !== undefined) {
     fetchOptions.headers['Content-Type'] = 'application/json';
-    fetchOptions.body = JSON.stringify(options.body);
+    fetchOptions.body = typeof options.body === 'string' ? options.body : JSON.stringify(options.body);
   }
 
   const response = await fetch(`${API_BASE}${path}`, fetchOptions);
@@ -3077,9 +3427,30 @@ function renderGCPFirewallRow(rule) {
   const isIngress = (rule.direction || 'INGRESS').toUpperCase() === 'INGRESS';
   const isEnabled = !rule.disabled;
 
-  const proto = rule.ipProtocol || 'tcp';
-  const portsStr = rule.ports && rule.ports.length ? `:${rule.ports.join(', ')}` : '';
-  const protoPorts = proto === 'all' ? '全部协议' : (proto + portsStr);
+  let protoPortsHtml = '';
+  if (rule.protocols && rule.protocols.length > 0) {
+    if (rule.protocols.some(p => (p.ipProtocol || '').toLowerCase() === 'all')) {
+      protoPortsHtml = '<span class="fw-proto-chip all">全部协议 (All)</span>';
+    } else {
+      protoPortsHtml = rule.protocols.map(p => {
+        const pName = (p.ipProtocol || '').toUpperCase();
+        const pPorts = p.ports && p.ports.length ? `:${p.ports.join(', ')}` : (pName === 'ICMP' ? '' : ' (全部)');
+        const protoKey = (p.ipProtocol || '').toLowerCase();
+        const cls = ['tcp', 'udp', 'icmp'].includes(protoKey) ? protoKey : 'other';
+        return `<span class="fw-proto-chip ${cls}">${escapeHtml(pName + pPorts)}</span>`;
+      }).join(' ');
+    }
+  } else {
+    const proto = rule.ipProtocol || 'tcp';
+    if (proto.toLowerCase() === 'all') {
+      protoPortsHtml = '<span class="fw-proto-chip all">全部协议 (All)</span>';
+    } else {
+      const portsStr = rule.ports && rule.ports.length ? `:${rule.ports.join(', ')}` : (proto.toLowerCase() === 'icmp' ? '' : ' (全部)');
+      const protoKey = proto.toLowerCase();
+      const cls = ['tcp', 'udp', 'icmp'].includes(protoKey) ? protoKey : 'other';
+      protoPortsHtml = `<span class="fw-proto-chip ${cls}">${escapeHtml(proto.toUpperCase() + portsStr)}</span>`;
+    }
+  }
 
   const ipRanges = isIngress 
     ? (rule.sourceRanges?.length ? rule.sourceRanges.join(', ') : '0.0.0.0/0')
@@ -3106,7 +3477,7 @@ function renderGCPFirewallRow(rule) {
           ${isAllow ? '允许' : '拒绝'}
         </span>
       </td>
-      <td><code>${escapeHtml(protoPorts)}</code></td>
+      <td>${protoPortsHtml}</td>
       <td><span style="font-family: monospace; font-size: 12px;">${escapeHtml(ipRanges)}</span></td>
       <td>${tagsHtml}</td>
       <td>
@@ -3142,6 +3513,21 @@ function openGCPFirewallModal(rule = null) {
     els.gcpFwModalMsg.className = 'form-message';
   }
 
+  const setProtoCheck = (proto, checked, ports = '', extraName = '') => {
+    const chk = document.getElementById(`gcp-proto-check-${proto}`);
+    const item = document.getElementById(`gcp-proto-item-${proto}`);
+    const body = document.getElementById(`gcp-proto-body-${proto}`);
+    if (chk) chk.checked = checked;
+    if (item) item.classList.toggle('active', checked);
+    if (body) body.style.display = checked ? '' : 'none';
+    if (proto === 'tcp' && els.gcpProtoTcpPorts) els.gcpProtoTcpPorts.value = ports;
+    if (proto === 'udp' && els.gcpProtoUdpPorts) els.gcpProtoUdpPorts.value = ports;
+    if (proto === 'other') {
+      if (els.gcpProtoOtherName) els.gcpProtoOtherName.value = extraName;
+      if (els.gcpProtoOtherPorts) els.gcpProtoOtherPorts.value = ports;
+    }
+  };
+
   if (rule) {
     els.gcpFwEditMode.value = 'edit';
     els.gcpFwModalTitle.textContent = `编辑 GCP 防火墙规则 - ${rule.name}`;
@@ -3150,8 +3536,49 @@ function openGCPFirewallModal(rule = null) {
     els.gcpFwPriority.value = rule.priority ?? 1000;
     els.gcpFwDirection.value = (rule.direction || 'INGRESS').toUpperCase();
     els.gcpFwAction.value = (rule.action || 'ALLOW').toUpperCase();
-    els.gcpFwProtocol.value = rule.ipProtocol || 'tcp';
-    els.gcpFwPorts.value = rule.ports && rule.ports.length ? rule.ports.join(', ') : '';
+
+    // Protocol handling
+    const protocols = (rule.protocols && rule.protocols.length > 0)
+      ? rule.protocols
+      : (rule.ipProtocol ? [{ ipProtocol: rule.ipProtocol, ports: rule.ports }] : []);
+
+    const isAll = protocols.some(p => (p.ipProtocol || '').toLowerCase() === 'all');
+    if (isAll) {
+      if (els.gcpProtoModeAll) els.gcpProtoModeAll.checked = true;
+      setProtoCheck('tcp', false);
+      setProtoCheck('udp', false);
+      setProtoCheck('icmp', false);
+      setProtoCheck('other', false);
+    } else {
+      if (els.gcpProtoModeCustom) els.gcpProtoModeCustom.checked = true;
+      setProtoCheck('tcp', false);
+      setProtoCheck('udp', false);
+      setProtoCheck('icmp', false);
+      setProtoCheck('other', false);
+
+      let anyChecked = false;
+      protocols.forEach(p => {
+        const protoLower = (p.ipProtocol || '').toLowerCase();
+        const pPortsStr = p.ports && p.ports.length ? p.ports.join(', ') : '';
+        if (protoLower === 'tcp') {
+          setProtoCheck('tcp', true, pPortsStr);
+          anyChecked = true;
+        } else if (protoLower === 'udp') {
+          setProtoCheck('udp', true, pPortsStr);
+          anyChecked = true;
+        } else if (protoLower === 'icmp') {
+          setProtoCheck('icmp', true);
+          anyChecked = true;
+        } else if (protoLower && protoLower !== 'all') {
+          setProtoCheck('other', true, pPortsStr, protoLower);
+          anyChecked = true;
+        }
+      });
+      if (!anyChecked) {
+        setProtoCheck('tcp', true);
+      }
+    }
+
     const isIngress = (rule.direction || 'INGRESS').toUpperCase() === 'INGRESS';
     els.gcpFwIpRanges.value = isIngress 
       ? (rule.sourceRanges?.length ? rule.sourceRanges.join(', ') : '0.0.0.0/0')
@@ -3167,8 +3594,13 @@ function openGCPFirewallModal(rule = null) {
     els.gcpFwPriority.value = 1000;
     els.gcpFwDirection.value = 'INGRESS';
     els.gcpFwAction.value = 'ALLOW';
-    els.gcpFwProtocol.value = 'tcp';
-    els.gcpFwPorts.value = '';
+
+    if (els.gcpProtoModeCustom) els.gcpProtoModeCustom.checked = true;
+    setProtoCheck('tcp', true, '');
+    setProtoCheck('udp', false, '');
+    setProtoCheck('icmp', false);
+    setProtoCheck('other', false, '', '');
+
     els.gcpFwIpRanges.value = '0.0.0.0/0';
     els.gcpFwTargetTags.value = '';
     els.gcpFwDescription.value = '';
@@ -3184,14 +3616,9 @@ function closeGCPFirewallModal() {
 }
 
 function updateGCPProtocolUI() {
-  const proto = els.gcpFwProtocol?.value || 'tcp';
-  const showPorts = proto === 'tcp' || proto === 'udp';
-  if (els.gcpFwPortsGroup) {
-    els.gcpFwPortsGroup.style.display = showPorts ? '' : 'none';
-  }
-  const quickPorts = document.getElementById('gcp-quick-ports');
-  if (quickPorts) {
-    quickPorts.style.display = showPorts ? '' : 'none';
+  const isAll = els.gcpProtoModeAll?.checked;
+  if (els.gcpProtoCustomContainer) {
+    els.gcpProtoCustomContainer.style.display = isAll ? 'none' : 'flex';
   }
   const isIngress = els.gcpFwDirection?.value === 'INGRESS';
   if (els.gcpFwIpLabel) {
@@ -3214,11 +3641,48 @@ async function handleGCPFirewallSubmit(event) {
   const priority = parseInt(els.gcpFwPriority.value, 10) || 1000;
   const direction = els.gcpFwDirection.value;
   const action = els.gcpFwAction.value;
-  const protocol = els.gcpFwProtocol.value;
-  const rawPorts = els.gcpFwPorts.value.trim();
-  const ports = (protocol === 'tcp' || protocol === 'udp') && rawPorts
-    ? rawPorts.split(',').map(s => s.trim()).filter(Boolean)
-    : [];
+
+  const isAll = els.gcpProtoModeAll?.checked;
+  let protocols = [];
+
+  if (isAll) {
+    protocols.push({ ipProtocol: 'all' });
+  } else {
+    const isTcp = els.gcpProtoCheckTcp?.checked;
+    const isUdp = els.gcpProtoCheckUdp?.checked;
+    const isIcmp = els.gcpProtoCheckIcmp?.checked;
+    const isOther = els.gcpProtoCheckOther?.checked;
+
+    if (!isTcp && !isUdp && !isIcmp && !isOther) {
+      showFormMessage(els.gcpFwModalMsg, '请至少勾选一个协议（如 TCP、UDP 或 ICMP）', 'error');
+      return;
+    }
+
+    if (isTcp) {
+      const tcpRaw = (els.gcpProtoTcpPorts?.value || '').trim();
+      const tcpPorts = tcpRaw ? tcpRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      protocols.push({ ipProtocol: 'tcp', ports: tcpPorts });
+    }
+    if (isUdp) {
+      const udpRaw = (els.gcpProtoUdpPorts?.value || '').trim();
+      const udpPorts = udpRaw ? udpRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      protocols.push({ ipProtocol: 'udp', ports: udpPorts });
+    }
+    if (isIcmp) {
+      protocols.push({ ipProtocol: 'icmp' });
+    }
+    if (isOther) {
+      const otherName = (els.gcpProtoOtherName?.value || '').trim().toLowerCase();
+      if (!otherName) {
+        showFormMessage(els.gcpFwModalMsg, '请填写其他协议的名称或协议号（如 esp, ah, sctp 等）', 'error');
+        return;
+      }
+      const otherRaw = (els.gcpProtoOtherPorts?.value || '').trim();
+      const otherPorts = otherRaw ? otherRaw.split(',').map(s => s.trim()).filter(Boolean) : [];
+      protocols.push({ ipProtocol: otherName, ports: otherPorts });
+    }
+  }
+
   const rawRanges = els.gcpFwIpRanges.value.trim();
   const ranges = rawRanges ? rawRanges.split(',').map(s => s.trim()).filter(Boolean) : ['0.0.0.0/0'];
   const rawTags = els.gcpFwTargetTags.value.trim();
@@ -3231,8 +3695,9 @@ async function handleGCPFirewallSubmit(event) {
     priority,
     direction,
     action,
-    ipProtocol: protocol,
-    ports,
+    protocols,
+    ipProtocol: protocols[0]?.ipProtocol || 'tcp',
+    ports: protocols[0]?.ports || [],
     sourceRanges: direction === 'INGRESS' ? ranges : [],
     destinationRanges: direction === 'EGRESS' ? ranges : [],
     targetTags,
@@ -3252,8 +3717,7 @@ async function handleGCPFirewallSubmit(event) {
 
     await fetchJSON(url, {
       method,
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(rulePayload)
+      body: rulePayload
     });
 
     addLog(`GCP 防火墙规则 ${name} ${editMode === 'edit' ? '修改' : '创建'}成功。`, 'success');
@@ -3277,8 +3741,7 @@ async function toggleGCPFirewall(name, currentlyDisabled) {
   try {
     await fetchJSON(`/api/gcp/${encodeURIComponent(account)}/firewalls/${encodeURIComponent(name)}/toggle`, {
       method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ disabled: newDisabled })
+      body: { disabled: newDisabled }
     });
     addLog(`GCP 防火墙规则 ${name} 已${actionText}。`, 'success');
     await fetchGCPFirewalls(account);
@@ -3581,11 +4044,10 @@ async function saveOciAccountSecurityListRules() {
   try {
     await fetchJSON(`/api/oci/${encodeURIComponent(account)}/security-lists/${encodeURIComponent(list.id)}/rules`, {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+      body: {
         ingressRules: ociAccountSLData.ingress,
         egressRules: ociAccountSLData.egress
-      })
+      }
     });
 
     list.ingressRules = ociAccountSLData.ingress;
@@ -3882,8 +4344,7 @@ async function handleAzureNSGAddSubmit(event) {
     const url = `/api/azure/${encodeURIComponent(account)}/security-groups/${encodeURIComponent(nsg.name)}/rules?resourceGroup=${encodeURIComponent(nsg.resourceGroup || '')}`;
     await fetchJSON(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      body: payload
     });
 
     addLog(`Azure 安全组 ${nsg.name} 规则 ${name} 添加成功。`, 'success');
