@@ -7,6 +7,10 @@ on:
         description: 'Image Name'
         required: true
         default: 'cloud-vm-manager'
+      version:
+        description: 'Version tag (e.g. v1.0.0, or leave empty to use date)'
+        required: false
+        default: ''
 
 env:
   REGISTRY: ghcr.io
@@ -33,9 +37,15 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Set date tag
-        id: date_tag
-        run: echo "DATE_TAG=$(date +%Y-%m-%d)" >> $GITHUB_ENV
+      - name: Set version tag
+        id: version_tag
+        run: |
+          if [ -n "${{ inputs.version }}" ]; then
+            TAG_VAL="${{ inputs.version }}"
+          else
+            TAG_VAL="$(date +%Y-%m-%d)"
+          fi
+          echo "IMAGE_TAG=${TAG_VAL}" >> $GITHUB_ENV
 
       - name: Extract metadata
         id: meta
@@ -44,13 +54,15 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=raw,value=latest
-            type=raw,value=${{ env.DATE_TAG }}
+            type=raw,value=${{ env.IMAGE_TAG }}
 
       - name: Build and push (multi-platform)
         uses: docker/build-push-action@v5
         with:
           context: .
           platforms: linux/amd64,linux/arm64
+          build-args: |
+            VERSION=${{ env.IMAGE_TAG }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

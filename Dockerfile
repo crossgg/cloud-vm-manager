@@ -7,7 +7,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w -X main.version=${VERSION}" -a -installsuffix cgo -o cloud-vm-manager .
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w -X github.com/crossgg/cloud-vm-manager/internal/updater.Version=${VERSION}" -a -installsuffix cgo -o cloud-vm-manager .
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags "-s -w" -a -installsuffix cgo -o launcher ./cmd/launcher
 
 FROM alpine:latest

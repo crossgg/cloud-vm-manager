@@ -547,22 +547,28 @@ func stringValue(value interface{}) string {
 	return ""
 }
 
+type GCPProtocolEntry struct {
+	IPProtocol string   `json:"ipProtocol"`
+	Ports      []string `json:"ports,omitempty"`
+}
+
 type GCPFirewallRule struct {
-	ID                string   `json:"id,omitempty"`
-	CreationTimestamp string   `json:"creationTimestamp,omitempty"`
-	Name              string   `json:"name"`
-	Description       string   `json:"description,omitempty"`
-	Network           string   `json:"network,omitempty"`
-	Priority          int      `json:"priority,omitempty"`
-	Direction         string   `json:"direction,omitempty"` // INGRESS or EGRESS
-	Action            string   `json:"action,omitempty"`    // ALLOW or DENY
-	SourceRanges      []string `json:"sourceRanges,omitempty"`
-	DestinationRanges []string `json:"destinationRanges,omitempty"`
-	SourceTags        []string `json:"sourceTags,omitempty"`
-	TargetTags        []string `json:"targetTags,omitempty"`
-	IPProtocol        string   `json:"ipProtocol,omitempty"`
-	Ports             []string `json:"ports,omitempty"`
-	Disabled          bool     `json:"disabled"`
+	ID                string             `json:"id,omitempty"`
+	CreationTimestamp string             `json:"creationTimestamp,omitempty"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description,omitempty"`
+	Network           string             `json:"network,omitempty"`
+	Priority          int                `json:"priority,omitempty"`
+	Direction         string             `json:"direction,omitempty"` // INGRESS or EGRESS
+	Action            string             `json:"action,omitempty"`    // ALLOW or DENY
+	SourceRanges      []string           `json:"sourceRanges,omitempty"`
+	DestinationRanges []string           `json:"destinationRanges,omitempty"`
+	SourceTags        []string           `json:"sourceTags,omitempty"`
+	TargetTags        []string           `json:"targetTags,omitempty"`
+	Protocols         []GCPProtocolEntry `json:"protocols,omitempty"`
+	IPProtocol        string             `json:"ipProtocol,omitempty"`
+	Ports             []string           `json:"ports,omitempty"`
+	Disabled          bool               `json:"disabled"`
 }
 
 func (g *GCPService) ListFirewalls() ([]GCPFirewallRule, error) {
@@ -607,35 +613,42 @@ func (g *GCPService) normalizeFirewallRule(item map[string]interface{}) GCPFirew
 
 	if allowedList, ok := item["allowed"].([]interface{}); ok && len(allowedList) > 0 {
 		rule.Action = "ALLOW"
-		rule.IPProtocol, rule.Ports = parseProtocolAndPorts(allowedList)
+		rule.Protocols, rule.IPProtocol, rule.Ports = parseProtocolEntries(allowedList)
 	} else if deniedList, ok := item["denied"].([]interface{}); ok && len(deniedList) > 0 {
 		rule.Action = "DENY"
-		rule.IPProtocol, rule.Ports = parseProtocolAndPorts(deniedList)
+		rule.Protocols, rule.IPProtocol, rule.Ports = parseProtocolEntries(deniedList)
 	} else {
 		rule.Action = "ALLOW"
 		rule.IPProtocol = "all"
+		rule.Protocols = []GCPProtocolEntry{{IPProtocol: "all"}}
 	}
 
 	return rule
 }
 
-func parseProtocolAndPorts(list []interface{}) (string, []string) {
+func parseProtocolEntries(list []interface{}) ([]GCPProtocolEntry, string, []string) {
+	entries := make([]GCPProtocolEntry, 0, len(list))
 	protocols := make([]string, 0)
-	ports := make([]string, 0)
+	allPorts := make([]string, 0)
 	for _, entry := range list {
 		if m, ok := entry.(map[string]interface{}); ok {
 			proto := stringValue(m["IPProtocol"])
 			if proto != "" {
+				ports := toStringSlice(m["ports"])
+				entries = append(entries, GCPProtocolEntry{
+					IPProtocol: proto,
+					Ports:      ports,
+				})
 				protocols = append(protocols, proto)
+				allPorts = append(allPorts, ports...)
 			}
-			ports = append(ports, toStringSlice(m["ports"])...)
 		}
 	}
 	protoStr := strings.Join(protocols, ",")
 	if protoStr == "" {
 		protoStr = "tcp"
 	}
-	return protoStr, ports
+	return entries, protoStr, allPorts
 }
 
 func (g *GCPService) buildFirewallPayload(rule GCPFirewallRule) map[string]interface{} {
@@ -682,29 +695,42 @@ func (g *GCPService) buildFirewallPayload(rule GCPFirewallRule) map[string]inter
 		}
 	}
 
-	proto := strings.ToLower(strings.TrimSpace(rule.IPProtocol))
-	if proto == "" {
-		proto = "tcp"
+	var entries []map[string]interface{}
+	if len(rule.Protocols) > 0 {
+		for _, p := range rule.Protocols {
+			proto := strings.ToLower(strings.TrimSpace(p.IPProtocol))
+			if proto == "" {
+				continue
+			}
+			entry := map[string]interface{}{
+				"IPProtocol": proto,
+			}
+			if len(p.Ports) > 0 && proto != "all" && proto != "icmp" && proto != "esp" && proto != "ah" {
+				entry["ports"] = p.Ports
+			}
+			entries = append(entries, entry)
+		}
 	}
 
-	var protoEntry map[string]interface{}
-	if proto == "all" {
-		protoEntry = map[string]interface{}{
-			"IPProtocol": "all",
+	// Fallback to legacy single proto/ports if protocols slice was empty
+	if len(entries) == 0 {
+		proto := strings.ToLower(strings.TrimSpace(rule.IPProtocol))
+		if proto == "" {
+			proto = "tcp"
 		}
-	} else {
-		protoEntry = map[string]interface{}{
+		entry := map[string]interface{}{
 			"IPProtocol": proto,
 		}
-		if len(rule.Ports) > 0 && proto != "icmp" && proto != "esp" && proto != "ah" {
-			protoEntry["ports"] = rule.Ports
+		if len(rule.Ports) > 0 && proto != "all" && proto != "icmp" && proto != "esp" && proto != "ah" {
+			entry["ports"] = rule.Ports
 		}
+		entries = append(entries, entry)
 	}
 
 	if strings.ToUpper(strings.TrimSpace(rule.Action)) == "DENY" {
-		payload["denied"] = []map[string]interface{}{protoEntry}
+		payload["denied"] = entries
 	} else {
-		payload["allowed"] = []map[string]interface{}{protoEntry}
+		payload["allowed"] = entries
 	}
 
 	return payload
