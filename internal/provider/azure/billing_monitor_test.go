@@ -235,9 +235,25 @@ func TestScanAndCleanupResourcesMock(t *testing.T) {
 							"sku":      map[string]interface{}{"name": "Standard"},
 							"properties": map[string]interface{}{
 								"ipAddress":                "1.2.3.4",
+								"publicIPAddressVersion":   "IPv4",
 								"publicIPAllocationMethod": "Static",
 								"ipConfiguration": map[string]interface{}{
 									"id": "/subscriptions/sub-1/resourceGroups/stu11/providers/Microsoft.Network/networkInterfaces/krkr27/ipConfigurations/ipconfig1",
+								},
+							},
+						},
+						{
+							"id":       "/subscriptions/sub-1/resourceGroups/stu11/providers/Microsoft.Network/publicIPAddresses/pip-ipv6",
+							"name":     "pip-ipv6",
+							"type":     "Microsoft.Network/publicIPAddresses",
+							"location": "koreacentral",
+							"sku":      map[string]interface{}{"name": "Standard"},
+							"properties": map[string]interface{}{
+								"ipAddress":                "2001:db8::1",
+								"publicIPAddressVersion":   "IPv6",
+								"publicIPAllocationMethod": "Static",
+								"ipConfiguration": map[string]interface{}{
+									"id": "/subscriptions/sub-1/resourceGroups/stu11/providers/Microsoft.Network/networkInterfaces/krkr27/ipConfigurations/ipconfigv6",
 								},
 							},
 						},
@@ -312,6 +328,14 @@ func TestScanAndCleanupResourcesMock(t *testing.T) {
 	}
 	if scan.Summary.OrphanPublicIPCount != 1 || scan.Summary.OrphanDiskCount != 1 {
 		t.Fatalf("unexpected orphan counts: %+v", scan.Summary)
+	}
+	for _, item := range scan.Items {
+		if item.Name == "pip-ipv6" && item.BillingRisk != "free_network" {
+			t.Fatalf("expected pip-ipv6 to be free_network, got %s", item.BillingRisk)
+		}
+		if item.Name == "pip-active" && item.BillingRisk != "likely_billable" {
+			t.Fatalf("expected pip-active (IPv4) to be likely_billable, got %s", item.BillingRisk)
+		}
 	}
 
 	// Cleanup only orphan IPs and orphan disks (must leave VM and active IP untouched)

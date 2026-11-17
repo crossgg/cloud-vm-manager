@@ -8189,6 +8189,7 @@ function renderAzureResources(data) {
         <tbody>
           ${items.map(item => {
             const specParts = [];
+            if (item.ipVersion) specParts.push(item.ipVersion);
             if (item.sku) specParts.push(item.sku);
             if (item.sizeGB) specParts.push(`${item.sizeGB} GB`);
             if (item.ipAddress) specParts.push(item.ipAddress);

@@ -20,6 +20,7 @@ type AzureResourceItem struct {
 	SKU              string `json:"sku,omitempty"`
 	SizeGB           int    `json:"sizeGB,omitempty"`
 	IPAddress        string `json:"ipAddress,omitempty"`
+	IPVersion        string `json:"ipVersion,omitempty"`
 	AllocationMethod string `json:"allocationMethod,omitempty"`
 	AttachedTo       string `json:"attachedTo,omitempty"`
 	AttachedIPID     string `json:"attachedIpId,omitempty"`
@@ -189,6 +190,10 @@ func (az *AzureService) ScanResources(scope string) (*AzureResourceScanResult, e
 		}
 		props, _ := pip["properties"].(map[string]interface{})
 		ipAddr := stringVal(props["ipAddress"])
+		ipVersion := stringVal(props["publicIPAddressVersion"])
+		if ipVersion == "" {
+			ipVersion = "IPv4"
+		}
 		allocMethod := stringVal(props["publicIPAllocationMethod"])
 		ipCfgID := ""
 		if ic, ok := props["ipConfiguration"].(map[string]interface{}); ok {
@@ -208,7 +213,7 @@ func (az *AzureService) ScanResources(scope string) (*AzureResourceScanResult, e
 		}
 		orphan := ipCfgID == "" && natGwID == "" && attachedTo == ""
 
-		risk, note := classifyPublicIPRisk(skuName, allocMethod, orphan)
+		risk, note := classifyPublicIPRisk(skuName, allocMethod, ipVersion, orphan)
 		items = append(items, AzureResourceItem{
 			ID:               id,
 			Name:             stringVal(pip["name"]),
@@ -218,6 +223,7 @@ func (az *AzureService) ScanResources(scope string) (*AzureResourceScanResult, e
 			Type:             stringVal(pip["type"]),
 			SKU:              skuName,
 			IPAddress:        ipAddr,
+			IPVersion:        ipVersion,
 			AllocationMethod: allocMethod,
 			AttachedTo:       attachedTo,
 			Orphan:           orphan,
@@ -689,20 +695,26 @@ func classifyVMFreeTier(vmSize string) (string, string) {
 	}
 }
 
-func classifyPublicIPRisk(sku, allocMethod string, orphan bool) (string, string) {
+func classifyPublicIPRisk(sku, allocMethod, ipVersion string, orphan bool) (string, string) {
+	if strings.EqualFold(ipVersion, "IPv6") {
+		if orphan {
+			return "free_network", "未绑定公网 IPv6（Azure 公网 IPv6 本身免费，可按需清理）"
+		}
+		return "free_network", "公网 IPv6 地址免费（仅出站流量按规则计费）"
+	}
 	if orphan {
 		if strings.EqualFold(sku, "Standard") {
-			return "orphan_billable", "未绑定公网 IP (Standard SKU)，持续按小时扣费，建议清理"
+			return "orphan_billable", "未绑定公网 IPv4 (Standard SKU)，持续按小时扣费，建议清理"
 		}
-		return "orphan_billable", "未绑定公网 IP，建议清理"
+		return "orphan_billable", "未绑定公网 IPv4，建议清理"
 	}
 	if strings.EqualFold(sku, "Standard") {
-		return "likely_billable", "Standard 静态公网 IP（学生订阅通常约 $3.6/月）"
+		return "likely_billable", "Standard 静态公网 IPv4（学生订阅通常约 $3.6/月）"
 	}
 	if strings.EqualFold(allocMethod, "Static") {
-		return "likely_billable", "静态公网 IP（请核对是否计费）"
+		return "likely_billable", "静态公网 IPv4（请核对是否计费）"
 	}
-	return "free_eligible", "Basic 动态公网 IP（通常在免费额度内）"
+	return "free_eligible", "Basic 动态公网 IPv4（通常在免费额度内）"
 }
 
 func classifyDiskRisk(sku string, sizeGB int, orphan bool) (string, string) {
