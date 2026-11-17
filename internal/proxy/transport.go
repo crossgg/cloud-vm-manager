@@ -118,12 +118,22 @@ func TransportForProxy(raw string) (http.RoundTripper, error) {
 func DirectTransport() *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.Proxy = nil
+	transport.IdleConnTimeout = 15 * time.Second
 	return transport
 }
 
 type fallbackRoundTripper struct {
 	primary  http.RoundTripper
 	fallback http.RoundTripper
+}
+
+func (t *fallbackRoundTripper) CloseIdleConnections() {
+	if c, ok := t.primary.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+	if c, ok := t.fallback.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
 }
 
 func (t *fallbackRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {

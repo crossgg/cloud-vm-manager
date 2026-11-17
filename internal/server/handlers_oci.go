@@ -196,6 +196,21 @@ func saveAccountOCISecurityListRules(c *gin.Context) {
 
 // --- NSG Handlers ---
 
+func getOCIAccountService(c *gin.Context) (*oci.OCIService, bool) {
+	account := c.Param("account")
+	service, _, ok := serviceSnapshot("oci", account)
+	if !ok || service == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": fmt.Sprintf("OCI account %q not found", account)})
+		return nil, false
+	}
+	ociSvc, ok := service.(*oci.OCIService)
+	if !ok {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": fmt.Sprintf("account %q is not an OCI service", account)})
+		return nil, false
+	}
+	return ociSvc, true
+}
+
 func listOCINetworkSecurityGroups(c *gin.Context) {
 	instanceID := c.Param("name")
 	ociSvc, ok := getOCIService(c)
@@ -203,13 +218,17 @@ func listOCINetworkSecurityGroups(c *gin.Context) {
 		return
 	}
 
-	groups, err := ociSvc.ListNetworkSecurityGroups(instanceID)
+	groups, available, vcnID, err := ociSvc.ListInstanceNetworkSecurityGroups(instanceID)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	c.JSON(http.StatusOK, gin.H{"networkSecurityGroups": groups})
+	c.JSON(http.StatusOK, gin.H{
+		"networkSecurityGroups":          groups,
+		"availableNetworkSecurityGroups": available,
+		"vcnId":                          vcnID,
+	})
 }
 
 func createOCINetworkSecurityGroup(c *gin.Context) {
@@ -233,12 +252,77 @@ func createOCINetworkSecurityGroup(c *gin.Context) {
 		return
 	}
 
-	groups, err := ociSvc.ListNetworkSecurityGroups(instanceID)
+	groups, available, vcnID, err := ociSvc.ListInstanceNetworkSecurityGroups(instanceID)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": true, "networkSecurityGroup": group})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "networkSecurityGroup": group, "networkSecurityGroups": groups})
+	c.JSON(http.StatusOK, gin.H{
+		"success":                        true,
+		"networkSecurityGroup":           group,
+		"networkSecurityGroups":          groups,
+		"availableNetworkSecurityGroups": available,
+		"vcnId":                          vcnID,
+	})
+}
+
+func attachOCINetworkSecurityGroup(c *gin.Context) {
+	instanceID := c.Param("name")
+	ociSvc, ok := getOCIService(c)
+	if !ok {
+		return
+	}
+
+	var payload struct {
+		GroupID string `json:"groupId"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ociSvc.AttachNetworkSecurityGroup(instanceID, payload.GroupID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	groups, available, vcnID, err := ociSvc.ListInstanceNetworkSecurityGroups(instanceID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":                        true,
+		"networkSecurityGroups":          groups,
+		"availableNetworkSecurityGroups": available,
+		"vcnId":                          vcnID,
+	})
+}
+
+func detachOCINetworkSecurityGroup(c *gin.Context) {
+	instanceID := c.Param("name")
+	groupID := c.Param("groupID")
+	ociSvc, ok := getOCIService(c)
+	if !ok {
+		return
+	}
+
+	if err := ociSvc.DetachNetworkSecurityGroup(instanceID, groupID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	groups, available, vcnID, err := ociSvc.ListInstanceNetworkSecurityGroups(instanceID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":                        true,
+		"networkSecurityGroups":          groups,
+		"availableNetworkSecurityGroups": available,
+		"vcnId":                          vcnID,
+	})
 }
 
 func saveOCINetworkSecurityGroupRules(c *gin.Context) {
@@ -263,12 +347,137 @@ func saveOCINetworkSecurityGroupRules(c *gin.Context) {
 		return
 	}
 
-	groups, err := ociSvc.ListNetworkSecurityGroups(instanceID)
+	groups, available, vcnID, err := ociSvc.ListInstanceNetworkSecurityGroups(instanceID)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success":                        true,
+		"networkSecurityGroups":          groups,
+		"availableNetworkSecurityGroups": available,
+		"vcnId":                          vcnID,
+	})
+}
+
+func listAccountOCINetworkSecurityGroups(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+
+	groups, err := ociSvc.ListAccountNetworkSecurityGroups()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"networkSecurityGroups": groups})
+}
+
+func renameAccountOCINetworkSecurityGroup(c *gin.Context) {
+	groupID := c.Param("groupID")
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+
+	var payload struct {
+		Name string `json:"name"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	updated, err := ociSvc.RenameNetworkSecurityGroup(groupID, payload.Name)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "networkSecurityGroup": updated})
+}
+
+func deleteAccountOCINetworkSecurityGroup(c *gin.Context) {
+	groupID := c.Param("groupID")
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+
+	if err := ociSvc.DeleteNetworkSecurityGroup(groupID); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func saveAccountOCINetworkSecurityGroupRules(c *gin.Context) {
+	groupID := c.Param("groupID")
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+
+	var payload struct {
+		IngressRules []oci.OCISecurityRuleInput `json:"ingressRules"`
+		EgressRules  []oci.OCISecurityRuleInput `json:"egressRules"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ociSvc.SaveAccountNetworkSecurityGroupRules(groupID, payload.IngressRules, payload.EgressRules); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	groups, err := ociSvc.ListAccountNetworkSecurityGroups()
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": true})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "networkSecurityGroups": groups})
+}
+
+func listAccountOCIRouteTables(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+
+	tables, err := ociSvc.ListAccountRouteTables()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"routeTables": tables})
+}
+
+func saveAccountOCIRouteTableRules(c *gin.Context) {
+	routeTableID := c.Param("routeTableID")
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+
+	var payload struct {
+		RouteRules []oci.OCIRouteRule `json:"routeRules"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	if err := ociSvc.SaveAccountRouteTableRules(routeTableID, payload.RouteRules); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	tables, err := ociSvc.ListAccountRouteTables()
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "routeTables": tables})
 }
 
 // --- Data Transfer Handlers & Monitors ---

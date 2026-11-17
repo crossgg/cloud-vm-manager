@@ -19,3 +19,4 @@ runtime/
 *.out
 coverage.*
 tmp/
+config/vm_cache.json

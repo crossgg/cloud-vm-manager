@@ -2,7 +2,9 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 
 	"github.com/crossgg/cloud-vm-manager/internal/cache"
 	"github.com/crossgg/cloud-vm-manager/internal/dns"
@@ -143,27 +145,55 @@ func updateDNS(c *gin.Context) {
 		return
 	}
 
-	service, _, ok := getCloudService(c)
-	if !ok {
+	var payload struct {
+		IPv4 string `json:"ipv4"`
+		IPv6 string `json:"ipv6"`
+	}
+	if c.Request.Body != nil {
+		if err := c.ShouldBindJSON(&payload); err != nil && err != io.EOF {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+	}
+
+	ipv4 := strings.TrimSpace(payload.IPv4)
+	ipv6 := strings.TrimSpace(payload.IPv6)
+	if ipv4 == "" && ipv6 == "" {
+		service, _, ok := getCloudService(c)
+		if !ok {
+			return
+		}
+
+		vm, err := service.GetVM(name)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+
+		if addr, hasV4 := publicIPAddress(vm); hasV4 {
+			ipv4 = addr
+		}
+		if addr6, hasV6 := primaryIPv6Address(vm); hasV6 {
+			ipv6 = addr6
+		}
+	}
+
+	hasA, hasAAAA := cloudflare.BindingTypes(providerName, account, name)
+	if (!hasA || ipv4 == "") && (!hasAAAA || ipv6 == "") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "VM has no matching public IPv4/IPv6 to bind"})
 		return
 	}
 
-	vm, err := service.GetVM(name)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
+	logs := cloudflare.UpdateForVMByIPs(providerName, account, name, ipv4, ipv6)
+	newIP := ipv4
+	if newIP == "" {
+		newIP = ipv6
 	}
-
-	ip, ok := publicIPAddress(vm)
-	if !ok {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "VM has no public IP to bind"})
-		return
-	}
-
-	logs := cloudflare.UpdateForVM(providerName, account, name, ip)
 	c.JSON(http.StatusOK, gin.H{
 		"success":      true,
-		"newIpAddress": ip,
+		"newIpAddress": newIP,
+		"ipv4":         ipv4,
+		"ipv6":         ipv6,
 		"logs":         logs,
 	})
 }
@@ -193,6 +223,27 @@ func publicIPAddress(vm map[string]interface{}) (string, bool) {
 		return "", false
 	}
 	return ip, true
+}
+
+func primaryIPv6Address(vm map[string]interface{}) (string, bool) {
+	if ipv6s, ok := vm["ipv6s"].([]map[string]interface{}); ok {
+		for _, item := range ipv6s {
+			ip := strings.TrimSpace(fmt.Sprintf("%v", item["ipAddress"]))
+			if prefix, ok := item["cidrPrefixLength"].(int); ok && prefix != 0 && prefix != 128 {
+				continue
+			}
+			if ip != "" && ip != "<nil>" {
+				return ip, true
+			}
+		}
+	}
+	if ipv6, ok := vm["ipv6"].(string); ok {
+		ipv6 = strings.TrimSpace(ipv6)
+		if ipv6 != "" && ipv6 != "N/A" && ipv6 != "unassigned" && ipv6 != "未分配" && !strings.Contains(ipv6, "/") {
+			return ipv6, true
+		}
+	}
+	return "", false
 }
 
 func getCloudService(c *gin.Context) (provider.CloudService, *dns.CloudflareService, bool) {

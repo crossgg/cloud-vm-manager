@@ -34,6 +34,7 @@ func getUpdateStatus(c *gin.Context) {
 			info.UpdateAvailable = updater.Version == "dev" || release.TagName != updater.Version
 			info.AssetName = asset.Name
 			info.ReleaseURL = release.HTMLURL
+			info.ReleaseNotes = strings.TrimSpace(release.Body)
 		}
 	}
 

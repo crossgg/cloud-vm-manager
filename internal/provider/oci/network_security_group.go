@@ -9,8 +9,272 @@ import (
 type OCINetworkSecurityGroup struct {
 	ID           string                 `json:"id"`
 	Name         string                 `json:"name"`
+	VCNID        string                 `json:"vcnId,omitempty"`
 	IngressRules []OCISecurityRuleInput `json:"ingressRules"`
 	EgressRules  []OCISecurityRuleInput `json:"egressRules"`
+}
+
+type OCINetworkSecurityGroupOption struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	VCNID    string `json:"vcnId,omitempty"`
+	Attached bool   `json:"attached"`
+}
+
+func (o *OCIService) compartmentIDOrTenancy() (string, error) {
+	compartmentID := strings.TrimSpace(o.Account.CompartmentID)
+	if compartmentID == "" {
+		compartmentID = strings.TrimSpace(o.Account.Tenancy)
+	}
+	if compartmentID == "" {
+		return "", fmt.Errorf("missing OCI compartmentId / tenancy")
+	}
+	return compartmentID, nil
+}
+
+func (o *OCIService) resolveVNICVCNID(vnic map[string]interface{}) (string, error) {
+	if vcnID := stringValue(vnic["vcnId"]); vcnID != "" {
+		return vcnID, nil
+	}
+	subnetID := stringValue(vnic["subnetId"])
+	if subnetID == "" {
+		return "", fmt.Errorf("OCI VNIC has no subnet id")
+	}
+	var subnet map[string]interface{}
+	if err := o.requestJSON("GET", "/subnets/"+url.PathEscape(subnetID), nil, nil, &subnet, false); err != nil {
+		return "", err
+	}
+	vcnID := stringValue(subnet["vcnId"])
+	if vcnID == "" {
+		return "", fmt.Errorf("OCI subnet has no VCN id")
+	}
+	return vcnID, nil
+}
+
+func (o *OCIService) ListInstanceNetworkSecurityGroups(instanceID string) ([]OCINetworkSecurityGroup, []OCINetworkSecurityGroupOption, string, error) {
+	_, vnic, err := o.primaryPrivateIP(instanceID)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	vcnID, err := o.resolveVNICVCNID(vnic)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
+	nsgIDs := stringSliceValue(vnic["nsgIds"])
+	attached := make([]OCINetworkSecurityGroup, 0, len(nsgIDs))
+	for _, nsgID := range nsgIDs {
+		group, err := o.rawNetworkSecurityGroup(nsgID)
+		if err != nil {
+			return nil, nil, "", err
+		}
+		ingressRules, err := o.networkSecurityGroupRules(nsgID, "INGRESS")
+		if err != nil {
+			return nil, nil, "", err
+		}
+		egressRules, err := o.networkSecurityGroupRules(nsgID, "EGRESS")
+		if err != nil {
+			return nil, nil, "", err
+		}
+		attached = append(attached, OCINetworkSecurityGroup{
+			ID:           nsgID,
+			Name:         valueOrDefault(stringValue(group["displayName"]), nsgID),
+			VCNID:        valueOrDefault(stringValue(group["vcnId"]), vcnID),
+			IngressRules: ingressRules,
+			EgressRules:  egressRules,
+		})
+	}
+
+	compartmentID, err := o.compartmentIDOrTenancy()
+	if err != nil {
+		return nil, nil, "", err
+	}
+	var rawGroups []map[string]interface{}
+	if err := o.requestJSON("GET", "/networkSecurityGroups", url.Values{
+		"compartmentId": {compartmentID},
+		"vcnId":         {vcnID},
+	}, nil, &rawGroups, false); err != nil {
+		return nil, nil, "", err
+	}
+
+	options := make([]OCINetworkSecurityGroupOption, 0, len(rawGroups))
+	for _, raw := range rawGroups {
+		state := strings.ToUpper(stringValue(raw["lifecycleState"]))
+		if state == "TERMINATING" || state == "TERMINATED" {
+			continue
+		}
+		id := stringValue(raw["id"])
+		if id == "" {
+			continue
+		}
+		options = append(options, OCINetworkSecurityGroupOption{
+			ID:       id,
+			Name:     valueOrDefault(stringValue(raw["displayName"]), id),
+			VCNID:    valueOrDefault(stringValue(raw["vcnId"]), vcnID),
+			Attached: containsString(nsgIDs, id),
+		})
+	}
+
+	return attached, options, vcnID, nil
+}
+
+func (o *OCIService) AttachNetworkSecurityGroup(instanceID, nsgID string) error {
+	nsgID = strings.TrimSpace(nsgID)
+	if nsgID == "" {
+		return fmt.Errorf("missing OCI network security group id")
+	}
+	_, vnic, err := o.primaryPrivateIP(instanceID)
+	if err != nil {
+		return err
+	}
+	vcnID, err := o.resolveVNICVCNID(vnic)
+	if err != nil {
+		return err
+	}
+
+	group, err := o.rawNetworkSecurityGroup(nsgID)
+	if err != nil {
+		return err
+	}
+	if groupVCN := stringValue(group["vcnId"]); groupVCN != "" && vcnID != "" && groupVCN != vcnID {
+		return fmt.Errorf("网络安全组与实例主 VNIC 不在同一个 VCN 下，无法绑定")
+	}
+
+	current := stringSliceValue(vnic["nsgIds"])
+	if containsString(current, nsgID) {
+		return nil
+	}
+	if len(current) >= 5 {
+		return fmt.Errorf("OCI 单个 VNIC 最多只能绑定 5 个网络安全组")
+	}
+	next := appendUniqueString(current, nsgID)
+	return o.updateVNICNSGs(stringValue(vnic["id"]), next)
+}
+
+func (o *OCIService) DetachNetworkSecurityGroup(instanceID, nsgID string) error {
+	nsgID = strings.TrimSpace(nsgID)
+	if nsgID == "" {
+		return fmt.Errorf("missing OCI network security group id")
+	}
+	_, vnic, err := o.primaryPrivateIP(instanceID)
+	if err != nil {
+		return err
+	}
+	current := stringSliceValue(vnic["nsgIds"])
+	if !containsString(current, nsgID) {
+		return nil
+	}
+	next := removeStringValue(current, nsgID)
+	return o.updateVNICNSGs(stringValue(vnic["id"]), next)
+}
+
+func (o *OCIService) ListAccountNetworkSecurityGroups() ([]OCINetworkSecurityGroup, error) {
+	compartmentID, err := o.compartmentIDOrTenancy()
+	if err != nil {
+		return nil, err
+	}
+	var rawGroups []map[string]interface{}
+	if err := o.requestJSON("GET", "/networkSecurityGroups", url.Values{
+		"compartmentId": {compartmentID},
+	}, nil, &rawGroups, false); err != nil {
+		return nil, err
+	}
+
+	groups := make([]OCINetworkSecurityGroup, 0, len(rawGroups))
+	for _, raw := range rawGroups {
+		state := strings.ToUpper(stringValue(raw["lifecycleState"]))
+		if state == "TERMINATING" || state == "TERMINATED" {
+			continue
+		}
+		nsgID := stringValue(raw["id"])
+		if nsgID == "" {
+			continue
+		}
+		ingressRules, err := o.networkSecurityGroupRules(nsgID, "INGRESS")
+		if err != nil {
+			return nil, err
+		}
+		egressRules, err := o.networkSecurityGroupRules(nsgID, "EGRESS")
+		if err != nil {
+			return nil, err
+		}
+		groups = append(groups, OCINetworkSecurityGroup{
+			ID:           nsgID,
+			Name:         valueOrDefault(stringValue(raw["displayName"]), nsgID),
+			VCNID:        stringValue(raw["vcnId"]),
+			IngressRules: ingressRules,
+			EgressRules:  egressRules,
+		})
+	}
+	return groups, nil
+}
+
+func (o *OCIService) SaveAccountNetworkSecurityGroupRules(nsgID string, ingressRules, egressRules []OCISecurityRuleInput) error {
+	nsgID = strings.TrimSpace(nsgID)
+	if nsgID == "" {
+		return fmt.Errorf("missing OCI network security group id")
+	}
+	if err := o.saveNetworkSecurityGroupRulesByDirection(nsgID, "INGRESS", ingressRules); err != nil {
+		return err
+	}
+	return o.saveNetworkSecurityGroupRulesByDirection(nsgID, "EGRESS", egressRules)
+}
+
+func (o *OCIService) RenameNetworkSecurityGroup(nsgID, name string) (OCINetworkSecurityGroup, error) {
+	nsgID = strings.TrimSpace(nsgID)
+	if nsgID == "" {
+		return OCINetworkSecurityGroup{}, fmt.Errorf("missing OCI network security group id")
+	}
+	displayName := strings.TrimSpace(name)
+	if displayName == "" {
+		return OCINetworkSecurityGroup{}, fmt.Errorf("网络安全组名称不能为空")
+	}
+
+	var updated map[string]interface{}
+	if err := o.requestJSON("PUT", "/networkSecurityGroups/"+url.PathEscape(nsgID), nil, map[string]interface{}{
+		"displayName": displayName,
+	}, &updated, false); err != nil {
+		return OCINetworkSecurityGroup{}, err
+	}
+	return OCINetworkSecurityGroup{
+		ID:    nsgID,
+		Name:  valueOrDefault(stringValue(updated["displayName"]), displayName),
+		VCNID: stringValue(updated["vcnId"]),
+	}, nil
+}
+
+func (o *OCIService) DeleteNetworkSecurityGroup(nsgID string) error {
+	nsgID = strings.TrimSpace(nsgID)
+	if nsgID == "" {
+		return fmt.Errorf("missing OCI network security group id")
+	}
+
+	var attachedVNICs []map[string]interface{}
+	if err := o.requestJSON("GET", "/networkSecurityGroups/"+url.PathEscape(nsgID)+"/vnics", nil, nil, &attachedVNICs, true); err == nil {
+		if len(attachedVNICs) > 0 {
+			return fmt.Errorf("该网络安全组仍绑定在 %d 个 VNIC（实例网卡）上，请先在对应实例的「安全规则 → 网络安全组」中解绑后再删除", len(attachedVNICs))
+		}
+	}
+
+	if err := o.requestJSON("DELETE", "/networkSecurityGroups/"+url.PathEscape(nsgID), nil, nil, nil, false); err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "409") || strings.Contains(strings.ToLower(msg), "conflict") || strings.Contains(strings.ToLower(msg), "in use") || strings.Contains(strings.ToLower(msg), "referenced") {
+			return fmt.Errorf("该网络安全组仍被实例 VNIC 绑定或被安全规则引用，请先解绑或移除引用后再删除（原始错误：%w）", err)
+		}
+		return err
+	}
+	return nil
+}
+
+func removeStringValue(values []string, target string) []string {
+	filtered := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" && value != target {
+			filtered = append(filtered, value)
+		}
+	}
+	return filtered
 }
 
 func (o *OCIService) ListNetworkSecurityGroups(instanceID string) ([]OCINetworkSecurityGroup, error) {

@@ -14,19 +14,26 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 )
 
+var ociTransientRetryDelay = 150 * time.Millisecond
+
 type OCIService struct {
-	Account config.OCIConfig
-	Client  *http.Client
-	key     *rsa.PrivateKey
+	Account    config.OCIConfig
+	Client     *http.Client
+	key        *rsa.PrivateKey
+	mu         sync.Mutex
+	homeRegion string
 }
 
 func NewOCIService(account config.OCIConfig) *OCIService {
@@ -73,74 +80,18 @@ func (o *OCIService) RestartVM(id string) error {
 }
 
 func (o *OCIService) ChangeIP(id string) (*provider.ChangeIPResult, error) {
-	privateIP, vnic, err := o.primaryPrivateIP(id)
-	if err != nil {
-		return nil, err
+	return o.ChangePrivateIPPublicIP(id, "")
+}
+
+func (o *OCIService) TerminateInstance(id string, preserveBootVolume bool) error {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return fmt.Errorf("missing OCI instance id")
 	}
-
-	privateIPID := stringValue(privateIP["id"])
-	if privateIPID == "" {
-		return nil, fmt.Errorf("OCI instance %s has no primary private IP id", id)
+	query := url.Values{
+		"preserveBootVolume": {fmt.Sprintf("%t", preserveBootVolume)},
 	}
-
-	logs := []string{
-		fmt.Sprintf("[1/4] 已定位主 VNIC: %s", valueOrDefault(stringValue(vnic["displayName"]), stringValue(vnic["id"]))),
-		fmt.Sprintf("[1/4] 已定位主私有 IP: %s", valueOrDefault(stringValue(privateIP["ipAddress"]), privateIPID)),
-	}
-
-	publicIP, err := o.publicIPByPrivateIP(privateIPID)
-	if err != nil {
-		return nil, err
-	}
-
-	if publicIP != nil && stringValue(publicIP["id"]) != "" {
-		oldPublicIPID := stringValue(publicIP["id"])
-		oldPublicIP := stringValue(publicIP["ipAddress"])
-		lifetime := stringValue(publicIP["lifetime"])
-		logs = append(logs, fmt.Sprintf("[2/4] 正在更新为没有公共 IP: %s...", oldPublicIP))
-
-		if strings.EqualFold(lifetime, "RESERVED") {
-			if err := o.unassignReservedPublicIP(oldPublicIPID); err != nil {
-				return nil, fmt.Errorf("解绑旧保留公网 IP 失败: %w", err)
-			}
-			logs = append(logs, "[2/4] 旧保留公网 IP 已解绑")
-		} else {
-			if err := o.deletePublicIP(oldPublicIPID); err != nil {
-				return nil, fmt.Errorf("删除旧临时公网 IP 失败: %w", err)
-			}
-			logs = append(logs, "[2/4] 旧临时公网 IP 已删除")
-		}
-
-		if err := o.waitNoPublicIP(privateIPID); err != nil {
-			return nil, err
-		}
-		logs = append(logs, "[3/4] 已确认当前状态为没有公共 IP")
-	} else {
-		logs = append(logs, "[2/4] 当前已经是没有公共 IP")
-		logs = append(logs, "[3/4] 跳过等待")
-	}
-
-	body := map[string]interface{}{
-		"compartmentId": o.Account.CompartmentID,
-		"lifetime":      "EPHEMERAL",
-		"privateIpId":   privateIPID,
-		"displayName":   "ephemeral-ip-" + time.Now().Format("20060102150405"),
-	}
-	var created map[string]interface{}
-	logs = append(logs, "[4/4] 正在更新为临时公共 IP...")
-	if err := o.requestJSON("POST", "/publicIps", nil, body, &created, false); err != nil {
-		return nil, fmt.Errorf("分配新临时公网 IP 失败: %w", err)
-	}
-
-	newIP := stringValue(created["ipAddress"])
-	logs = append(logs, fmt.Sprintf("[4/4] 新临时公共 IP 分配成功: %s", valueOrDefault(newIP, "pending")))
-
-	return &provider.ChangeIPResult{
-		Success:      true,
-		Message:      "IP更换成功",
-		NewIPAddress: newIP,
-		Logs:         logs,
-	}, nil
+	return o.requestJSON("DELETE", "/instances/"+url.PathEscape(id), query, nil, nil, false)
 }
 
 func (o *OCIService) deletePublicIP(publicIPID string) error {
@@ -163,7 +114,7 @@ func (o *OCIService) waitNoPublicIP(privateIPID string) error {
 		if publicIP == nil || stringValue(publicIP["id"]) == "" {
 			return nil
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(ociIPPollInterval)
 	}
 	return fmt.Errorf("等待 OCI 私有 IP 解除公网 IP 绑定超时")
 }
@@ -181,6 +132,8 @@ func (o *OCIService) normalizeVM(instance map[string]interface{}) map[string]int
 	region := o.Account.Region
 	privateIP := "未分配"
 	publicIP := map[string]interface{}{"ipAddress": "未分配", "name": "N/A"}
+	ipv6Display := "未分配"
+	ipv6Items := make([]map[string]interface{}, 0)
 
 	if primaryIP, vnic, err := o.primaryPrivateIP(id); err == nil {
 		privateIP = valueOrDefault(stringValue(primaryIP["ipAddress"]), valueOrDefault(stringValue(vnic["privateIp"]), "未分配"))
@@ -190,6 +143,26 @@ func (o *OCIService) normalizeVM(instance map[string]interface{}) map[string]int
 		} else if stringValue(vnic["publicIp"]) != "" {
 			publicIP["ipAddress"] = stringValue(vnic["publicIp"])
 			publicIP["name"] = "ephemeral"
+		}
+		if list, err := o.listVNICIPv6s(stringValue(vnic["id"])); err == nil && len(list) > 0 {
+			for _, ip6 := range list {
+				ipv6Items = append(ipv6Items, map[string]interface{}{
+					"id":               ip6.ID,
+					"ipAddress":        ip6.IPAddress,
+					"cidrPrefixLength": ip6.CIDRPrefixLength,
+				})
+				if ipv6Display == "未分配" && ip6.CanChange {
+					ipv6Display = ip6.IPAddress
+				}
+			}
+			if ipv6Display == "未分配" {
+				first := list[0]
+				if first.CIDRPrefixLength != 128 {
+					ipv6Display = fmt.Sprintf("%s/%d", first.IPAddress, first.CIDRPrefixLength)
+				} else {
+					ipv6Display = first.IPAddress
+				}
+			}
 		}
 	}
 
@@ -208,6 +181,8 @@ func (o *OCIService) normalizeVM(instance map[string]interface{}) map[string]int
 		"imageId":            stringValue(sourceDetails["imageId"]),
 		"privateIP":          privateIP,
 		"publicIP":           publicIP,
+		"ipv6":               ipv6Display,
+		"ipv6s":              ipv6Items,
 		"resourceGroup":      o.Account.CompartmentID,
 	}
 }
@@ -274,28 +249,17 @@ func (o *OCIService) requestJSON(method, path string, query url.Values, body int
 // This is the shared implementation used by both iaas and monitoring APIs.
 func (o *OCIService) doRequest(method, endpoint string, body interface{}, out interface{}, allowNotFound bool) error {
 	var payload []byte
-	var reader io.Reader
 	if body != nil {
 		var err error
 		payload, err = json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		reader = bytes.NewReader(payload)
 	} else if method == "POST" || method == "PUT" {
 		payload = []byte{}
-		reader = bytes.NewReader(payload)
 	}
 
-	req, err := http.NewRequest(method, endpoint, reader)
-	if err != nil {
-		return err
-	}
-	if err := o.sign(req, payload); err != nil {
-		return err
-	}
-
-	resp, err := o.Client.Do(req)
+	resp, err := o.sendSignedRequest(method, endpoint, "application/json", payload)
 	if err != nil {
 		return err
 	}
@@ -316,10 +280,36 @@ func (o *OCIService) doRequest(method, endpoint string, body interface{}, out in
 }
 
 func (o *OCIService) endpoint(path string, query url.Values) string {
+	return buildServiceEndpoint("iaas."+o.Account.Region+".oraclecloud.com", "/20160918"+path, query)
+}
+
+func (o *OCIService) identityEndpoint(region, path string, query url.Values) string {
+	if strings.TrimSpace(region) == "" {
+		region = o.Account.Region
+	}
+	return buildServiceEndpoint("identity."+region+".oraclecloud.com", "/20160918"+path, query)
+}
+
+func (o *OCIService) limitsEndpoint(path string, query url.Values) string {
+	return buildServiceEndpoint("limits."+o.Account.Region+".oci.oraclecloud.com", "/20190729"+path, query)
+}
+
+func (o *OCIService) usageEndpoint(region, path string, query url.Values) string {
+	if strings.TrimSpace(region) == "" {
+		region = o.Account.Region
+	}
+	return buildServiceEndpoint("usageapi."+region+".oci.oraclecloud.com", "/20200107"+path, query)
+}
+
+func (o *OCIService) objectStorageEndpoint(path string, query url.Values) string {
+	return buildServiceEndpoint("objectstorage."+o.Account.Region+".oraclecloud.com", path, query)
+}
+
+func buildServiceEndpoint(host, fullPath string, query url.Values) string {
 	u := url.URL{
 		Scheme: "https",
-		Host:   "iaas." + o.Account.Region + ".oraclecloud.com",
-		Path:   "/20160918" + path,
+		Host:   host,
+		Path:   fullPath,
 	}
 	if len(query) > 0 {
 		u.RawQuery = query.Encode()
@@ -327,13 +317,158 @@ func (o *OCIService) endpoint(path string, query url.Values) string {
 	return u.String()
 }
 
+func (o *OCIService) identityRequestJSON(region, method, path string, query url.Values, body, out interface{}, allowNotFound bool) error {
+	return o.doRequest(method, o.identityEndpoint(region, path, query), body, out, allowNotFound)
+}
+
+func (o *OCIService) limitsRequestJSON(method, path string, query url.Values, body, out interface{}, allowNotFound bool) error {
+	return o.doRequest(method, o.limitsEndpoint(path, query), body, out, allowNotFound)
+}
+
+func (o *OCIService) usageRequestJSON(region, method, path string, query url.Values, body, out interface{}, allowNotFound bool) error {
+	return o.doRequest(method, o.usageEndpoint(region, path, query), body, out, allowNotFound)
+}
+
+func (o *OCIService) HomeRegion() string {
+	o.mu.Lock()
+	cached := o.homeRegion
+	o.mu.Unlock()
+	if cached != "" {
+		return cached
+	}
+
+	resolved := o.Account.Region
+	if strings.TrimSpace(o.Account.Tenancy) != "" {
+		var subs []map[string]interface{}
+		if err := o.identityRequestJSON(o.Account.Region, "GET", "/tenancies/"+url.PathEscape(o.Account.Tenancy)+"/regionSubscriptions", nil, nil, &subs, false); err == nil {
+			for _, sub := range subs {
+				if isHome, _ := sub["isHomeRegion"].(bool); isHome {
+					if name := strings.TrimSpace(stringValue(sub["regionName"])); name != "" {
+						resolved = name
+						break
+					}
+				}
+			}
+		}
+	}
+
+	o.mu.Lock()
+	o.homeRegion = resolved
+	o.mu.Unlock()
+	return resolved
+}
+
+func (o *OCIService) doRawRequest(method, endpoint, contentType string, payload []byte, allowNotFound bool) (int, http.Header, []byte, error) {
+	if payload == nil && (method == "POST" || method == "PUT") {
+		payload = []byte{}
+	}
+
+	resp, err := o.sendSignedRequest(method, endpoint, contentType, payload)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	defer resp.Body.Close()
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return resp.StatusCode, resp.Header, nil, err
+	}
+	if allowNotFound && resp.StatusCode == http.StatusNotFound {
+		return resp.StatusCode, resp.Header, data, nil
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return resp.StatusCode, resp.Header, data, fmt.Errorf("OCI API %s %s returned %d: %s", method, endpoint, resp.StatusCode, string(data))
+	}
+	return resp.StatusCode, resp.Header, data, nil
+}
+
+func (o *OCIService) sendSignedRequest(method, endpoint, contentType string, payload []byte) (*http.Response, error) {
+	const maxAttempts = 3
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			closeClientIdleConnections(o.Client)
+			if ociTransientRetryDelay > 0 {
+				time.Sleep(ociTransientRetryDelay)
+			}
+		}
+
+		var reader io.Reader
+		if payload != nil {
+			reader = bytes.NewReader(payload)
+		}
+		req, err := http.NewRequest(method, endpoint, reader)
+		if err != nil {
+			return nil, err
+		}
+		if attempt > 0 {
+			// Force a fresh TCP/TLS connection when recovering from stale keep-alive EOF.
+			req.Close = true
+		}
+		if err := o.signWithContentType(req, payload, contentType); err != nil {
+			return nil, err
+		}
+
+		resp, err := o.Client.Do(req)
+		if err == nil {
+			return resp, nil
+		}
+		lastErr = err
+		if !shouldRetryOCITransientError(method, err) {
+			return nil, err
+		}
+	}
+	return nil, lastErr
+}
+
+func shouldRetryOCITransientError(method string, err error) bool {
+	if err == nil {
+		return false
+	}
+	if method != http.MethodGet && method != http.MethodHead {
+		return false
+	}
+	if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, net.ErrClosed) {
+		return true
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "connection reset by peer") ||
+		strings.Contains(msg, "broken pipe") ||
+		strings.Contains(msg, "use of closed network connection") ||
+		strings.Contains(msg, "client connection lost") ||
+		strings.Contains(msg, "server sent goaway")
+}
+
+func closeClientIdleConnections(client *http.Client) {
+	if client == nil {
+		return
+	}
+	if client.Transport == nil {
+		if c, ok := http.DefaultTransport.(interface{ CloseIdleConnections() }); ok {
+			c.CloseIdleConnections()
+		}
+		return
+	}
+	if c, ok := client.Transport.(interface{ CloseIdleConnections() }); ok {
+		c.CloseIdleConnections()
+	}
+}
+
 func (o *OCIService) sign(req *http.Request, payload []byte) error {
+	return o.signWithContentType(req, payload, "application/json")
+}
+
+func (o *OCIService) signWithContentType(req *http.Request, payload []byte, contentType string) error {
 	if o.key == nil {
 		key, err := cryptoutil.LoadRSAPrivateKey(o.Account.KeyFile)
 		if err != nil {
 			return err
 		}
 		o.key = key
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/octet-stream"
 	}
 
 	req.Header.Set("Date", time.Now().UTC().Format(http.TimeFormat))
@@ -343,7 +478,7 @@ func (o *OCIService) sign(req *http.Request, payload []byte) error {
 	if req.Method == "POST" || req.Method == "PUT" {
 		sum := sha256.Sum256(payload)
 		req.Header.Set("x-content-sha256", base64.StdEncoding.EncodeToString(sum[:]))
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", contentType)
 		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(payload)))
 		headers = append(headers, "x-content-sha256", "content-type", "content-length")
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -38,7 +39,20 @@ func NewCloudflareService(cfg *config.Config) *CloudflareService {
 }
 
 func (cf *CloudflareService) UpdateForVM(provider, account, vmID, ip string) []string {
-	if cf == nil || ip == "" {
+	if cf == nil || strings.TrimSpace(ip) == "" {
+		return nil
+	}
+	parsed := net.ParseIP(strings.TrimSpace(ip))
+	if parsed != nil && parsed.To4() == nil {
+		return cf.UpdateForVMByIPs(provider, account, vmID, "", strings.TrimSpace(ip))
+	}
+	return cf.UpdateForVMByIPs(provider, account, vmID, strings.TrimSpace(ip), "")
+}
+
+func (cf *CloudflareService) UpdateForVMByIPs(provider, account, vmID, ipv4, ipv6 string) []string {
+	ipv4 = strings.TrimSpace(ipv4)
+	ipv6 = strings.TrimSpace(ipv6)
+	if cf == nil || (ipv4 == "" && ipv6 == "") {
 		return nil
 	}
 
@@ -48,17 +62,49 @@ func (cf *CloudflareService) UpdateForVM(provider, account, vmID, ip string) []s
 			continue
 		}
 
+		recordType := strings.ToUpper(strings.TrimSpace(binding.Type))
+		if recordType == "" {
+			recordType = "A"
+		}
+
+		targetIP := ""
+		switch recordType {
+		case "A":
+			if ipv4 == "" {
+				continue
+			}
+			parsed := net.ParseIP(ipv4)
+			if parsed == nil || parsed.To4() == nil {
+				logs = append(logs, fmt.Sprintf("跳过 %s (A): %q 不是有效的 IPv4 地址", binding.Domain, ipv4))
+				continue
+			}
+			targetIP = ipv4
+		case "AAAA":
+			if ipv6 == "" {
+				continue
+			}
+			parsed := net.ParseIP(ipv6)
+			if parsed == nil || parsed.To4() != nil {
+				logs = append(logs, fmt.Sprintf("跳过 %s (AAAA): %q 不是有效的 IPv6 地址", binding.Domain, ipv6))
+				continue
+			}
+			targetIP = ipv6
+		default:
+			logs = append(logs, fmt.Sprintf("跳过 %s (%s): 不支持的自动 IP 记录类型", binding.Domain, recordType))
+			continue
+		}
+
 		cfAccount, ok := cf.accounts[binding.Cloudflare]
 		if !ok {
 			logs = append(logs, fmt.Sprintf("Cloudflare 配置 %s 不存在，跳过 %s", binding.Cloudflare, binding.Domain))
 			continue
 		}
 
-		if err := cf.upsertRecord(cfAccount, binding, ip); err != nil {
-			logs = append(logs, fmt.Sprintf("Cloudflare 更新失败 %s -> %s: %v", binding.Domain, ip, err))
+		if err := cf.upsertRecord(cfAccount, binding, targetIP); err != nil {
+			logs = append(logs, fmt.Sprintf("Cloudflare 更新失败 %s (%s) -> %s: %v", binding.Domain, recordType, targetIP, err))
 			continue
 		}
-		logs = append(logs, fmt.Sprintf("Cloudflare 已更新 %s -> %s", binding.Domain, ip))
+		logs = append(logs, fmt.Sprintf("Cloudflare 已更新 %s (%s) -> %s", binding.Domain, recordType, targetIP))
 	}
 	return logs
 }
@@ -73,6 +119,24 @@ func (cf *CloudflareService) HasBinding(provider, account, vmID string) bool {
 		}
 	}
 	return false
+}
+
+func (cf *CloudflareService) BindingTypes(provider, account, vmID string) (hasA bool, hasAAAA bool) {
+	if cf == nil {
+		return false, false
+	}
+	for _, binding := range cf.bindings {
+		if !bindingMatches(binding, provider, account, vmID) {
+			continue
+		}
+		recordType := strings.ToUpper(strings.TrimSpace(binding.Type))
+		if recordType == "" || recordType == "A" {
+			hasA = true
+		} else if recordType == "AAAA" {
+			hasAAAA = true
+		}
+	}
+	return hasA, hasAAAA
 }
 
 func bindingMatches(binding config.DNSBinding, provider, account, vmID string) bool {

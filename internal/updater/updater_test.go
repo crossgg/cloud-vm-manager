@@ -1,10 +1,22 @@
 package updater
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 )
+
+func TestGithubReleaseJSONIncludesBody(t *testing.T) {
+	raw := `{"tag_name":"v1.2.0","name":"v1.2.0","body":"### 新增\n- 支持策略管理","html_url":"https://github.com/crossgg/cloud-vm-manager/releases/tag/v1.2.0","assets":[]}`
+	var rel GithubRelease
+	if err := json.Unmarshal([]byte(raw), &rel); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+	if rel.TagName != "v1.2.0" || rel.Body != "### 新增\n- 支持策略管理" {
+		t.Fatalf("unexpected release parsed: %+v", rel)
+	}
+}
 
 func TestUpdateAssetName(t *testing.T) {
 	tests := []struct {

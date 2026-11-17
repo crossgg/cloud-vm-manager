@@ -39,6 +39,7 @@ func main() {
 
 	cache.InitVMCache(configPath)
 	server.InitDTMonitors()
+	server.InitOCICreateTasks()
 
 	r := server.SetupRouter(authService)
 	_ = r.Run(":3000")

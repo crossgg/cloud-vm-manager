@@ -28,6 +28,7 @@ const (
 type GithubRelease struct {
 	TagName string               `json:"tag_name"`
 	Name    string               `json:"name"`
+	Body    string               `json:"body"`
 	HTMLURL string               `json:"html_url"`
 	Assets  []GithubReleaseAsset `json:"assets"`
 }
@@ -46,6 +47,7 @@ type UpdateInfo struct {
 	RuntimePath     string `json:"runtimePath"`
 	IsRuntime       bool   `json:"isRuntime"`
 	ReleaseURL      string `json:"releaseUrl,omitempty"`
+	ReleaseNotes    string `json:"releaseNotes,omitempty"`
 	DownloadProxy   string `json:"downloadProxy,omitempty"`
 	CheckError      string `json:"checkError,omitempty"`
 }

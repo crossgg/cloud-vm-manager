@@ -135,77 +135,373 @@
             </div>
           </div>
 
-          <div id="dt-monitor-panel" class="dt-monitor-panel" hidden>
-            <div class="dt-monitor-header">
-              <div>
-                <h3><i class="bi bi-bar-chart-line"></i> OCI 数据传输用量监控</h3>
-                <p id="dt-monitor-account-label">未选择</p>
+          <!-- OCI Account Horizontal Tab Bar -->
+          <div id="oci-workspace-tabs" class="oci-workspace-tabs" hidden>
+            <button class="oci-ws-tab" type="button" data-oci-tab="overview"><i class="bi bi-speedometer2"></i> 概述</button>
+            <button class="oci-ws-tab active" type="button" data-oci-tab="instances"><i class="bi bi-cpu"></i> 实例管理</button>
+            <button class="oci-ws-tab" type="button" data-oci-tab="monitoring"><i class="bi bi-shield-check"></i> 云监控</button>
+            <button class="oci-ws-tab" type="button" data-oci-tab="users"><i class="bi bi-people"></i> 用户管理</button>
+            <button class="oci-ws-tab" type="button" data-oci-tab="create"><i class="bi bi-plus-circle"></i> 创建实例</button>
+            <button class="oci-ws-tab" type="button" data-oci-tab="tasks"><i class="bi bi-list-check"></i> 任务管理</button>
+            <button class="oci-ws-tab" type="button" data-oci-tab="storage"><i class="bi bi-hdd-stack"></i> 对象存储</button>
+          </div>
+
+          <!-- OCI Tab: Overview -->
+          <div id="oci-tab-overview" class="oci-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-speedometer2"></i> 账号概述（成本与配额）</h3>
+                  <p id="oci-overview-meta">正在读取...</p>
+                </div>
+                <button id="oci-overview-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新概述</button>
               </div>
-              <div class="dt-monitor-actions">
-                <button id="dt-fetch-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 手动获取</button>
-                <button id="dt-settings-toggle" class="ghost-btn" type="button"><i class="bi bi-gear"></i> 监控设置</button>
+              <div id="oci-overview-content" class="oci-overview-content">
+                <div class="empty-state compact">点击刷新读取当前 OCI 账号成本与配额信息。</div>
               </div>
             </div>
+          </div>
 
-            <div class="dt-stats-grid">
-              <div class="dt-stat-card">
-                <span class="dt-stat-label">当月用量</span>
-                <strong id="dt-usage-value">-- GB</strong>
+          <!-- OCI Tab: Monitoring (Data Transfer Monitor moved here, compact) -->
+          <div id="oci-tab-monitoring" class="oci-tab-pane" hidden>
+            <div id="dt-monitor-panel" class="dt-monitor-panel dt-monitor-compact">
+              <div class="dt-monitor-header">
+                <div>
+                  <h3><i class="bi bi-bar-chart-line"></i> OCI 数据传输用量监控</h3>
+                  <p id="dt-monitor-account-label">未选择</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="dt-fetch-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 手动获取</button>
+                  <button id="dt-settings-toggle" class="ghost-btn" type="button"><i class="bi bi-gear"></i> 监控设置</button>
+                </div>
               </div>
-              <div class="dt-stat-card">
-                <span class="dt-stat-label">阈值</span>
-                <strong id="dt-threshold-value">-- GB</strong>
-              </div>
-              <div class="dt-stat-card">
-                <span class="dt-stat-label">使用率</span>
-                <div class="dt-progress-container">
-                  <div class="dt-progress-bar">
-                    <div id="dt-progress-fill" class="dt-progress-fill" style="width: 0%"></div>
+
+              <div class="dt-stats-grid">
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">当月用量</span>
+                  <strong id="dt-usage-value">-- GB</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">阈值</span>
+                  <strong id="dt-threshold-value">-- GB</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">使用率</span>
+                  <div class="dt-progress-container">
+                    <div class="dt-progress-bar">
+                      <div id="dt-progress-fill" class="dt-progress-fill" style="width: 0%"></div>
+                    </div>
+                    <span id="dt-percentage-value" class="dt-percentage-text">0%</span>
                   </div>
-                  <span id="dt-percentage-value" class="dt-percentage-text">0%</span>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">监控状态</span>
+                  <span id="dt-monitor-status" class="dt-monitor-status-badge off">未启用</span>
                 </div>
               </div>
-              <div class="dt-stat-card">
-                <span class="dt-stat-label">监控状态</span>
-                <span id="dt-monitor-status" class="dt-monitor-status-badge off">未启用</span>
+
+              <div id="dt-last-update" class="dt-last-update">最后更新：--</div>
+
+              <div id="dt-settings-panel" class="dt-settings-area" hidden>
+                <div class="dt-settings-divider">
+                  <span>监控设置</span>
+                </div>
+                <div class="dt-settings-fields">
+                  <label class="switch-row">
+                    <input id="dt-enabled" type="checkbox">
+                    <span>启用周期检测</span>
+                  </label>
+                  <div class="dt-settings-row">
+                    <label class="field compact">
+                      <span>检测周期（秒）</span>
+                      <input id="dt-interval" type="number" min="60" step="1" value="300" placeholder="300">
+                    </label>
+                    <label class="field compact">
+                      <span>阈值（GB）</span>
+                      <input id="dt-threshold-input" type="number" min="1" step="1" value="9000" placeholder="9000">
+                    </label>
+                  </div>
+                  <label class="switch-row">
+                    <input id="dt-auto-stop" type="checkbox">
+                    <span>超阈值自动停机 ⚠️</span>
+                  </label>
+                  <label class="field compact">
+                    <span>停止方式</span>
+                    <select id="dt-stop-method">
+                      <option value="soft">软停止（SOFTSTOP）</option>
+                      <option value="hard">强制停止（STOP）</option>
+                    </select>
+                  </label>
+                </div>
+                <button id="dt-save-config-btn" class="primary-btn" type="button">保存监控配置</button>
+                <div id="dt-config-message" class="form-message"></div>
+              </div>
+
+              <div class="dt-logs-wrap">
+                <div class="oci-ip-section-label">监控日志：</div>
+                <div id="dt-monitor-logs" class="oci-task-logs">暂无监控日志</div>
               </div>
             </div>
+          </div>
 
-            <div id="dt-last-update" class="dt-last-update">最后更新：--</div>
-
-            <div id="dt-settings-panel" class="dt-settings-area" hidden>
-              <div class="dt-settings-divider">
-                <span>监控设置</span>
+          <!-- OCI Tab: IAM User & Group Management -->
+          <div id="oci-tab-users" class="oci-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-people"></i> IAM 用户与用户组管理</h3>
+                  <p id="oci-iam-meta">管理租户 Default Domain 下的用户、所属用户组、控制台密码与 API Key</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="oci-iam-refresh-btn" class="ghost-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+                  <button id="oci-iam-new-policy-btn" class="secondary-btn" type="button">+ 新建策略</button>
+                  <button id="oci-iam-new-group-btn" class="secondary-btn" type="button">+ 新建用户组</button>
+                  <button id="oci-iam-new-user-btn" class="primary-btn" type="button">+ 新建用户</button>
+                </div>
               </div>
-              <div class="dt-settings-fields">
-                <label class="switch-row">
-                  <input id="dt-enabled" type="checkbox">
-                  <span>启用周期检测</span>
-                </label>
-                <div class="dt-settings-row">
-                  <label class="field compact">
-                    <span>检测周期（秒）</span>
-                    <input id="dt-interval" type="number" min="60" step="1" value="300" placeholder="300">
+              <div id="oci-iam-create-user-box" class="oci-inline-box" hidden>
+                <div class="form-grid-equal">
+                  <label class="field compact"><span>用户名 *</span><input id="oci-iam-user-name" type="text" placeholder="例如 ops-user"></label>
+                  <label class="field compact"><span>描述</span><input id="oci-iam-user-desc" type="text" placeholder="可选"></label>
+                  <label class="field compact"><span>邮箱（可选）</span><input id="oci-iam-user-email" type="email" placeholder="user@example.com"></label>
+                  <label class="field compact"><span>初始加入用户组</span><select id="oci-iam-user-group"></select></label>
+                </div>
+                <div class="oci-ip-subform-actions">
+                  <button id="oci-iam-user-cancel" class="ghost-btn oci-ip-btn-sm" type="button">取消</button>
+                  <button id="oci-iam-user-submit" class="primary-btn oci-ip-btn-sm" type="button">创建用户</button>
+                </div>
+              </div>
+              <div id="oci-iam-create-group-box" class="oci-inline-box" hidden>
+                <div class="form-grid-equal">
+                  <label class="field compact"><span>用户组名称 *</span><input id="oci-iam-group-name" type="text" placeholder="例如 dev-ops"></label>
+                  <label class="field compact"><span>描述</span><input id="oci-iam-group-desc" type="text" placeholder="可选"></label>
+                </div>
+                <div class="oci-ip-subform-actions">
+                  <button id="oci-iam-group-cancel" class="ghost-btn oci-ip-btn-sm" type="button">取消</button>
+                  <button id="oci-iam-group-submit" class="primary-btn oci-ip-btn-sm" type="button">创建用户组</button>
+                </div>
+              </div>
+              <div id="oci-iam-message" class="form-message"></div>
+              <div id="oci-iam-content">
+                <div class="empty-state compact">点击刷新读取 IAM 用户与用户组。</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- OCI Tab: Create Instance (Full inline form) -->
+          <div id="oci-tab-create" class="oci-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3 id="oci-create-page-title"><i class="bi bi-plus-circle"></i> 创建 OCI 实例</h3>
+                  <p>支持立即单次创建，或保存为随机间隔自动抢购任务</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="oci-create-reload-opts-btn" class="ghost-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新参数</button>
+                </div>
+              </div>
+
+              <form id="oci-task-form">
+                <input type="hidden" id="oci-task-edit-id" value="">
+                <div class="oci-task-templates">
+                  <span class="oci-task-templates-label">快速模板：</span>
+                  <button class="ghost-btn oci-template-btn" type="button" data-template="amd_free">AMD 免费实例 (E2.1.Micro)</button>
+                  <button class="ghost-btn oci-template-btn" type="button" data-template="arm_free">ARM 免费实例 (A1.Flex 2C12G)</button>
+                  <button class="ghost-btn oci-template-btn" type="button" data-template="custom">自定义参数</button>
+                </div>
+
+                <div class="form-grid-equal">
+                  <label class="field">
+                    <span>OCI 账号</span>
+                    <select id="oci-task-account" required></select>
                   </label>
-                  <label class="field compact">
-                    <span>阈值（GB）</span>
-                    <input id="dt-threshold-input" type="number" min="1" step="1" value="9000" placeholder="9000">
+                  <label class="field">
+                    <span>任务名称</span>
+                    <input id="oci-task-name" type="text" placeholder="例如 arm-2c12g-抢购" required>
+                  </label>
+                  <label class="field">
+                    <span>实例名称（displayName）</span>
+                    <input id="oci-task-display-name" type="text" placeholder="留空自动按任务名生成">
+                  </label>
+                  <label class="field">
+                    <span>可用域（Availability Domain）</span>
+                    <select id="oci-task-ad" required></select>
+                  </label>
+                  <label class="field">
+                    <span>实例规格（Shape）</span>
+                    <select id="oci-task-shape" required></select>
+                  </label>
+                  <label class="field">
+                    <span>引导卷大小（GB）</span>
+                    <input id="oci-task-boot-size" type="number" min="47" max="32768" value="50">
+                    <small class="field-hint">免费额度共 200 GB，AMD 最小约 47 GB，ARM 最小约 50 GB</small>
+                  </label>
+                  <label class="field">
+                    <span>OCPU 数量</span>
+                    <input id="oci-task-ocpus" type="number" min="1" step="0.25" value="1">
+                  </label>
+                  <label class="field">
+                    <span>内存大小（GB）</span>
+                    <input id="oci-task-memory" type="number" min="1" step="1" value="1">
                   </label>
                 </div>
-                <label class="switch-row">
-                  <input id="dt-auto-stop" type="checkbox">
-                  <span>超阈值自动停机 ⚠️</span>
+
+                <label class="field" style="margin-top: 12px;">
+                  <span>系统镜像（按所选规格过滤兼容镜像）</span>
+                  <select id="oci-task-image" required></select>
                 </label>
-                <label class="field compact">
-                  <span>停止方式</span>
-                  <select id="dt-stop-method">
-                    <option value="soft">软停止（SOFTSTOP）</option>
-                    <option value="hard">强制停止（STOP）</option>
-                  </select>
-                </label>
+
+                <div class="oci-default-net-bar">
+                  <div class="oci-default-net-left">
+                    <span class="field-hint" id="oci-create-net-hint">新账号无 VCN/子网时可一键创建默认网络（VCN + 公有子网 + IGW）</span>
+                  </div>
+                  <div class="oci-default-net-actions">
+                    <label class="switch-row compact">
+                      <input id="oci-default-net-ipv6" type="checkbox" checked>
+                      <span>同时开启 IPv6</span>
+                    </label>
+                    <button id="oci-create-default-net-btn" class="secondary-btn oci-ip-btn-sm" type="button">一键创建默认 VCN/子网</button>
+                  </div>
+                </div>
+
+                <div class="form-grid-equal" style="margin-top: 10px;">
+                  <label class="field">
+                    <span>VCN</span>
+                    <select id="oci-task-vcn"></select>
+                  </label>
+                  <label class="field">
+                    <span>子网（Subnet）</span>
+                    <select id="oci-task-subnet" required></select>
+                  </label>
+                  <label class="field">
+                    <span>最小请求间隔（秒）</span>
+                    <input id="oci-task-min-interval" type="number" min="5" value="30" required>
+                  </label>
+                  <label class="field">
+                    <span>最大请求间隔（秒）</span>
+                    <input id="oci-task-max-interval" type="number" min="5" value="60" required>
+                    <small class="field-hint">每次重试将在最小与最大秒数之间随机等待</small>
+                  </label>
+                </div>
+
+                <div class="oci-task-network-checks">
+                  <label class="switch-row compact">
+                    <input id="oci-task-assign-public" type="checkbox" checked>
+                    <span>分配公网 IPv4</span>
+                  </label>
+                  <label class="switch-row compact">
+                    <input id="oci-task-assign-ipv6" type="checkbox">
+                    <span>分配 IPv6（需子网已开启 IPv6）</span>
+                  </label>
+                </div>
+
+                <div class="field" style="margin-top: 12px;">
+                  <span>绑定网络安全组（NSG，可选，同 VCN）</span>
+                  <div id="oci-task-nsgs" class="oci-task-nsg-list">
+                    <span class="field-hint">请先选择子网</span>
+                  </div>
+                </div>
+
+                <div class="field" style="margin-top: 12px;">
+                  <div class="oci-task-label-row">
+                    <span>SSH 公钥（ssh_authorized_keys）</span>
+                    <label class="secondary-btn oci-upload-pub-btn">
+                      <i class="bi bi-upload"></i> 上传公钥文件 (.pub)
+                      <input id="oci-task-ssh-file" type="file" accept=".pub,.txt,text/plain" hidden>
+                    </label>
+                  </div>
+                  <textarea id="oci-task-ssh-key" rows="3" placeholder="ssh-ed25519 AAAAC3... 或 ssh-rsa AAAAB3..."></textarea>
+                </div>
+
+                <div class="field" style="margin-top: 12px;">
+                  <span>Cloud-init 自定义脚本（可选，支持 #cloud-config 或 #!/bin/bash）</span>
+                  <textarea id="oci-task-cloud-init" rows="4" placeholder="#cloud-config&#10;chpasswd:&#10;  list: |&#10;    root:YourPassword123&#10;  expire: false"></textarea>
+                </div>
+
+                <div id="oci-task-message" class="form-message" style="margin-top: 12px;"></div>
+
+                <div class="oci-create-footer-actions">
+                  <button id="oci-task-cancel-edit" class="ghost-btn" type="button" hidden>取消编辑</button>
+                  <button id="oci-launch-once-btn" class="secondary-btn" type="button">立即创建一次</button>
+                  <button id="oci-task-save" class="primary-btn" type="submit">保存为自动抢购任务</button>
+                </div>
+              </form>
+            </div>
+          </div>
+
+          <!-- OCI Tab: Tasks Management -->
+          <div id="oci-tab-tasks" class="oci-tab-pane" hidden>
+            <div id="oci-create-tasks-panel" class="dt-monitor-panel oci-tasks-panel">
+              <div class="dt-monitor-header">
+                <div>
+                  <h3><i class="bi bi-rocket-takeoff"></i> OCI 创建 VM 任务管理</h3>
+                  <p id="oci-tasks-account-label">未选择</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="oci-tasks-refresh-btn" class="ghost-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新任务</button>
+                  <button id="oci-task-new-amd-btn" class="secondary-btn" type="button">+ AMD 免费模板</button>
+                  <button id="oci-task-new-arm-btn" class="secondary-btn" type="button">+ ARM 免费模板</button>
+                  <button id="oci-task-new-btn" class="primary-btn" type="button">+ 新建任务</button>
+                </div>
               </div>
-              <button id="dt-save-config-btn" class="primary-btn" type="button">保存监控配置</button>
-              <div id="dt-config-message" class="form-message"></div>
+              <div id="oci-tasks-list" class="oci-tasks-list">
+                <div class="empty-state compact">暂无创建任务，可在「创建实例」或点击上方模板按钮创建。</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- OCI Tab: Object Storage -->
+          <div id="oci-tab-storage" class="oci-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-hdd-stack"></i> 对象存储 (Object Storage)</h3>
+                  <p id="oci-os-meta">管理当前区域的对象存储 Bucket 与文件对象</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="oci-os-refresh-btn" class="ghost-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
+                  <button id="oci-os-new-bucket-btn" class="secondary-btn" type="button">+ 创建 Bucket</button>
+                  <button id="oci-os-del-bucket-btn" class="ghost-btn oci-ip-btn-danger" type="button">删除 Bucket</button>
+                </div>
+              </div>
+
+              <div class="oci-os-toolbar">
+                <label class="field compact" style="min-width: 240px; flex: 1;">
+                  <span>当前 Bucket</span>
+                  <select id="oci-os-bucket-select"></select>
+                </label>
+                <div class="oci-os-toolbar-btns">
+                  <button id="oci-os-new-folder-btn" class="secondary-btn" type="button">+ 新建文件夹</button>
+                  <label class="primary-btn oci-os-upload-label">
+                    <i class="bi bi-cloud-upload"></i> 上传文件
+                    <input id="oci-os-upload-input" type="file" hidden>
+                  </label>
+                </div>
+              </div>
+
+              <div id="oci-os-create-bucket-box" class="oci-inline-box" hidden>
+                <div class="form-grid-equal">
+                  <label class="field compact"><span>Bucket 名称 *</span><input id="oci-os-bucket-name" type="text" placeholder="例如 my-backup-bucket"></label>
+                  <label class="field compact">
+                    <span>访问权限</span>
+                    <select id="oci-os-bucket-access">
+                      <option value="NoPublicAccess">私有（NoPublicAccess）</option>
+                      <option value="ObjectRead">公开读取对象（ObjectRead）</option>
+                      <option value="ObjectReadWithoutList">公开读取但不允许列目录</option>
+                    </select>
+                  </label>
+                </div>
+                <div class="oci-ip-subform-actions">
+                  <button id="oci-os-bucket-cancel" class="ghost-btn oci-ip-btn-sm" type="button">取消</button>
+                  <button id="oci-os-bucket-submit" class="primary-btn oci-ip-btn-sm" type="button">确认创建</button>
+                </div>
+              </div>
+
+              <div id="oci-os-breadcrumb" class="oci-os-breadcrumb"></div>
+              <div id="oci-os-message" class="form-message"></div>
+              <div id="oci-os-objects-wrap">
+                <div class="empty-state compact">请先选择或创建 Bucket。</div>
+              </div>
             </div>
           </div>
 
@@ -370,7 +666,7 @@
           <div class="section-title">
             <div>
               <h2>防火墙管理</h2>
-              <p>多云统一防火墙控制中心：GCP (VPC 全局防火墙)、OCI (安全列表 Security List)、Azure (网络安全组 NSG)。</p>
+              <p>多云统一网络规则中心：GCP (VPC 全局防火墙)、OCI (安全列表 / NSG / 路由表)、Azure (网络安全组 NSG)。</p>
             </div>
             <div style="display: flex; gap: 10px;">
               <button id="fw-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新</button>
@@ -511,6 +807,13 @@
               </div>
               <button id="apply-update-btn" class="primary-btn" type="button">更新并重启</button>
               <div id="update-message" class="form-message"></div>
+              <div id="update-release-notes-box" class="update-release-notes-box" hidden>
+                <div class="update-release-notes-head">
+                  <span id="update-release-notes-title">版本更新说明</span>
+                  <a id="update-release-link" href="#" target="_blank" rel="noopener noreferrer" hidden>在 GitHub 查看 ↗</a>
+                </div>
+                <div id="update-release-notes-body" class="update-release-notes-body"></div>
+              </div>
             </div>
           </div>
         </section>
@@ -584,11 +887,23 @@
         </div>
       </div>
       <div id="sg-nsg-create-row" class="sg-create-row" hidden>
-        <label class="field compact">
-          <span>新建网络安全组</span>
-          <input id="sg-new-nsg-name" type="text" placeholder="例如 vm-manager-nsg">
-        </label>
-        <button id="sg-create-nsg" class="secondary-btn" type="button">创建并关联</button>
+        <div class="sg-nsg-manage-grid">
+          <div class="sg-nsg-manage-group">
+            <label class="field compact">
+              <span>选择已有网络安全组（同 VCN）</span>
+              <select id="sg-existing-nsg-select"></select>
+            </label>
+            <button id="sg-attach-nsg" class="secondary-btn" type="button">绑定已有</button>
+            <button id="sg-detach-nsg" class="ghost-btn" type="button" title="从当前实例解绑选中的网络安全组">解绑当前</button>
+          </div>
+          <div class="sg-nsg-manage-group">
+            <label class="field compact">
+              <span>新建网络安全组</span>
+              <input id="sg-new-nsg-name" type="text" placeholder="例如 vm-manager-nsg">
+            </label>
+            <button id="sg-create-nsg" class="secondary-btn" type="button">创建并关联</button>
+          </div>
+        </div>
       </div>
       <div id="sg-modal-body" class="modal-body">
         <div class="empty-state compact">加载中...</div>
@@ -598,6 +913,225 @@
         <button id="sg-modal-save" class="primary-btn" type="button">保存安全规则</button>
       </div>
       <div id="sg-modal-message" class="form-message"></div>
+    </div>
+  </div>
+
+  <!-- OCI IP Management Modal -->
+  <div id="oci-ip-modal" class="modal-overlay" hidden>
+    <div class="modal-panel oci-ip-modal-panel">
+      <div class="modal-header">
+        <h3 id="oci-ip-modal-title">IP 管理</h3>
+        <button id="oci-ip-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div id="oci-ip-modal-body" class="modal-body oci-ip-modal-body">
+        <div class="empty-state compact">加载中...</div>
+      </div>
+      <div id="oci-ip-subform" class="oci-ip-subform" hidden></div>
+      <div class="oci-ip-dns-bar">
+        <label class="switch-row compact" id="oci-ip-dns-toggle-wrap">
+          <input id="oci-ip-update-dns-checkbox" type="checkbox">
+          <span>换 IP 时更新 DNS</span>
+        </label>
+        <div class="oci-ip-dns-actions">
+          <span id="oci-ip-dns-hint" class="field-hint"></span>
+          <button id="oci-ip-manual-dns-btn" class="secondary-btn" type="button">手动更新 DNS</button>
+        </div>
+      </div>
+      <div class="modal-footer oci-ip-modal-footer">
+        <div class="oci-ip-attach-actions">
+          <button id="oci-ip-attach-v4-btn" class="secondary-btn" type="button">附加 IPv4</button>
+          <button id="oci-ip-attach-v6-btn" class="secondary-btn" type="button">附加 IPv6</button>
+          <button id="oci-ip-enable-v6-btn" class="secondary-btn" type="button" hidden>开启子网 IPv6</button>
+          <button id="oci-ip-attach-reserved-btn" class="secondary-btn" type="button">附加保留IP</button>
+        </div>
+        <button id="oci-ip-modal-done" class="secondary-btn" type="button">关闭</button>
+      </div>
+      <div id="oci-ip-modal-message" class="form-message"></div>
+    </div>
+  </div>
+
+  <!-- OCI Terminate Instance Confirm Modal -->
+  <div id="oci-terminate-modal" class="modal-overlay" hidden>
+    <div class="modal-panel" style="width: min(500px, 95vw);">
+      <div class="modal-header">
+        <h3 id="oci-terminate-title">删除 OCI 实例</h3>
+        <button id="oci-terminate-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="oci-terminate-warning">
+          即将永久终止实例：<strong id="oci-terminate-target-name">-</strong>
+        </div>
+        <div class="oci-terminate-options">
+          <label class="radio-label">
+            <input type="radio" name="oci-terminate-boot" value="false" checked>
+            <span>删除实例（同时删除引导卷）</span>
+          </label>
+          <label class="radio-label">
+            <input type="radio" name="oci-terminate-boot" value="true">
+            <span>删除实例（保留引导卷）</span>
+          </label>
+        </div>
+        <label class="field">
+          <span>请输入完整的实例名称 <strong id="oci-terminate-expected-name"></strong> 以确认删除：</span>
+          <input id="oci-terminate-confirm-input" type="text" autocomplete="off" placeholder="输入实例名称">
+        </label>
+        <div id="oci-terminate-message" class="form-message"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="oci-terminate-cancel" class="secondary-btn" type="button">取消</button>
+        <button id="oci-terminate-confirm" class="primary-btn oci-danger-submit-btn" type="button" disabled>确认删除实例</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OCI IAM User API Keys Modal -->
+  <div id="oci-iam-apikey-modal" class="modal-overlay" hidden>
+    <div class="modal-panel" style="width: min(640px, 95vw);">
+      <div class="modal-header">
+        <h3 id="oci-apikey-modal-title">管理用户 API Key</h3>
+        <button id="oci-apikey-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div id="oci-apikey-list" class="oci-apikey-list">
+          <div class="empty-state compact">加载中...</div>
+        </div>
+        <div id="oci-apikey-generated-box" class="oci-inline-box" hidden>
+          <div class="oci-ip-subform-title">
+            <span>新生成的私钥（仅展示一次，请及时保存！）</span>
+            <button id="oci-apikey-download-pem" class="secondary-btn oci-ip-btn-sm" type="button">下载 .pem</button>
+          </div>
+          <textarea id="oci-apikey-generated-pem" rows="5" readonly></textarea>
+        </div>
+        <div class="field">
+          <span>添加 API Key（PEM 格式公钥，每个用户最多 3 个）</span>
+          <textarea id="oci-apikey-input" rows="3" placeholder="-----BEGIN PUBLIC KEY-----&#10;...&#10;-----END PUBLIC KEY-----"></textarea>
+        </div>
+        <div id="oci-apikey-message" class="form-message"></div>
+      </div>
+      <div class="modal-footer" style="justify-content: space-between; flex-wrap: wrap;">
+        <button id="oci-apikey-auto-btn" class="secondary-btn" type="button">自动生成 RSA 密钥对并绑定</button>
+        <div style="display: flex; gap: 8px;">
+          <button id="oci-apikey-upload-btn" class="primary-btn" type="button">上传公钥</button>
+          <button id="oci-apikey-done-btn" class="ghost-btn" type="button">关闭</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- OCI IAM Policy Create/Edit Modal -->
+  <div id="oci-iam-policy-modal" class="modal-overlay" hidden>
+    <div class="modal-panel oci-policy-modal-panel">
+      <div class="modal-header">
+        <h3 id="oci-policy-modal-title">新建 IAM 策略 (Policy)</h3>
+        <button id="oci-policy-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="modal-body" style="max-height: 72vh; overflow-y: auto;">
+        <input type="hidden" id="oci-policy-edit-id" value="">
+        <div class="form-grid-equal">
+          <label class="field compact">
+            <span>策略名称 *</span>
+            <input id="oci-policy-name" type="text" placeholder="例如 compute-ops-policy">
+          </label>
+          <label class="field compact">
+            <span>所属区间 (Compartment) *</span>
+            <select id="oci-policy-compartment"></select>
+          </label>
+        </div>
+        <label class="field compact" style="margin-top: 10px;">
+          <span>策略描述 *</span>
+          <input id="oci-policy-description" type="text" placeholder="例如 允许运维组管理计算实例与网络">
+        </label>
+
+        <!-- Official Policy Builder: Common Policy Templates -->
+        <div class="oci-policy-builder-box">
+          <div class="oci-policy-builder-title">
+            <span><i class="bi bi-magic"></i> 官方常见策略模板 (Policy Builder)</span>
+            <button id="oci-policy-apply-tpl-btn" class="secondary-btn oci-ip-btn-sm" type="button">+ 应用模板语句</button>
+          </div>
+          <div class="oci-policy-inline-row">
+            <label class="field compact">
+              <span>策略用例分类</span>
+              <select id="oci-policy-usecase">
+                <option value="all">全部用例 (All)</option>
+                <option value="account">账户与租户管理 (Account Management)</option>
+                <option value="compute">计算实例 (Compute)</option>
+                <option value="network">网络管理 (Networking)</option>
+                <option value="storage">存储与对象存储 (Storage)</option>
+                <option value="database">数据库 (Database)</option>
+              </select>
+            </label>
+            <label class="field compact">
+              <span>常用策略模板</span>
+              <select id="oci-policy-template"></select>
+            </label>
+          </div>
+          <div class="oci-policy-inline-row" style="margin-top: 10px;">
+            <label class="field compact">
+              <span>目标用户组 (Group)</span>
+              <select id="oci-policy-tpl-group"></select>
+            </label>
+            <label class="field compact">
+              <span>生效位置 (Location)</span>
+              <select id="oci-policy-tpl-location"></select>
+            </label>
+          </div>
+          <div id="oci-policy-tpl-preview" class="oci-policy-preview"></div>
+        </div>
+
+        <!-- Statement Builder -->
+        <div class="oci-policy-builder-box">
+          <div class="oci-policy-builder-title">
+            <span><i class="bi bi-sliders"></i> 快捷语句构造器</span>
+            <button id="oci-policy-add-stmt-btn" class="secondary-btn oci-ip-btn-sm" type="button">+ 添加语句</button>
+          </div>
+          <div class="oci-policy-inline-row">
+            <label class="field compact">
+              <span>用户组 (Group)</span>
+              <select id="oci-policy-stmt-group"></select>
+            </label>
+            <label class="field compact">
+              <span>权限动词 (Verb)</span>
+              <select id="oci-policy-stmt-verb">
+                <option value="manage">manage (完全管理)</option>
+                <option value="use">use (使用/操作)</option>
+                <option value="read">read (只读)</option>
+                <option value="inspect">inspect (仅查看列表/元数据)</option>
+              </select>
+            </label>
+            <label class="field compact">
+              <span>资源类型 (Resource)</span>
+              <select id="oci-policy-stmt-resource">
+                <option value="all-resources">all-resources (全部资源)</option>
+                <option value="instance-family">instance-family (计算实例)</option>
+                <option value="virtual-network-family">virtual-network-family (云网络 VCN/子网/IP)</option>
+                <option value="volume-family">volume-family (块存储卷)</option>
+                <option value="object-family">object-family (对象存储全家族)</option>
+                <option value="buckets">buckets (Bucket)</option>
+                <option value="objects">objects (存储对象)</option>
+                <option value="compartments">compartments (区间)</option>
+                <option value="users">users (IAM 用户)</option>
+                <option value="groups">groups (IAM 用户组)</option>
+                <option value="policies">policies (IAM 策略)</option>
+                <option value="autonomous-database-family">autonomous-database-family (自治数据库)</option>
+              </select>
+            </label>
+            <label class="field compact">
+              <span>生效位置 (Location)</span>
+              <select id="oci-policy-stmt-location"></select>
+            </label>
+          </div>
+        </div>
+
+        <label class="field">
+          <span>策略语句列表（每行一条 Statement，支持直接手动编辑/追加 where 条件或域前缀）</span>
+          <textarea id="oci-policy-statements" rows="6" placeholder="Allow group dev-ops to manage instance-family in tenancy"></textarea>
+        </label>
+        <div id="oci-policy-message" class="form-message"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="oci-policy-cancel-btn" class="ghost-btn" type="button">取消</button>
+        <button id="oci-policy-submit-btn" class="primary-btn" type="button">保存策略</button>
+      </div>
     </div>
   </div>
 
@@ -877,6 +1411,31 @@
         <button id="oci-acc-sl-save" class="primary-btn" type="button">保存安全列表规则</button>
       </div>
       <div id="oci-acc-sl-message" class="form-message"></div>
+    </div>
+  </div>
+
+  <!-- OCI Account Route Table Modal -->
+  <div id="oci-route-table-modal" class="modal-overlay" hidden>
+    <div class="modal-panel sg-modal-panel">
+      <div class="modal-header">
+        <h3 id="oci-rt-modal-title">OCI 路由表规则管理</h3>
+        <button id="oci-rt-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="sg-toolbar" style="padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap;">
+        <div id="oci-rt-meta" class="field-hint" style="margin: 0;">-</div>
+        <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+          <button id="oci-rt-quick-v6-btn" class="secondary-btn oci-ip-btn-sm" type="button">+ 一键补充 ::/0 → IGW</button>
+          <button id="oci-rt-quick-v4-btn" class="secondary-btn oci-ip-btn-sm" type="button">+ 一键补充 0.0.0.0/0 → IGW</button>
+        </div>
+      </div>
+      <div id="oci-rt-modal-body" class="modal-body" style="padding: 0 20px 16px;">
+        <div class="empty-state compact">加载中...</div>
+      </div>
+      <div class="modal-footer">
+        <button id="oci-rt-add" class="secondary-btn" type="button">+ 添加路由规则</button>
+        <button id="oci-rt-save" class="primary-btn" type="button">保存路由规则</button>
+      </div>
+      <div id="oci-rt-message" class="form-message"></div>
     </div>
   </div>
 
