@@ -39,6 +39,7 @@ func main() {
 
 	cache.InitVMCache(configPath)
 	server.InitDTMonitors()
+	server.InitAzureMonitors()
 	server.InitOCICreateTasks()
 
 	r := server.SetupRouter(authService)

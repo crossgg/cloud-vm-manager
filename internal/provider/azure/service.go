@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -25,6 +26,7 @@ type TokenResponse struct {
 type AzureService struct {
 	cfg      *config.Config
 	Account  config.AzureConfig
+	tokenMu  sync.Mutex
 	token    string
 	tokenExp time.Time
 	Client   *http.Client
@@ -43,7 +45,10 @@ func NewAzureAccountService(cfg *config.Config, account config.AzureConfig) *Azu
 }
 
 func (az *AzureService) getToken() (string, error) {
-	if az.token != "" && time.Now().Before(az.tokenExp) {
+	az.tokenMu.Lock()
+	defer az.tokenMu.Unlock()
+
+	if az.token != "" && time.Now().Before(az.tokenExp.Add(-30*time.Second)) {
 		return az.token, nil
 	}
 
@@ -54,12 +59,18 @@ func (az *AzureService) getToken() (string, error) {
 		"resource":      {"https://management.azure.com/"},
 	}
 
-	resp, err := az.Client.PostForm(
-		fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/token", az.Account.TenantId),
-		data,
-	)
-	if err != nil {
-		return "", err
+	var resp *http.Response
+	var err error
+	tokenURL := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/token", az.Account.TenantId)
+	for attempt := 0; attempt < 3; attempt++ {
+		resp, err = az.Client.PostForm(tokenURL, data)
+		if err == nil {
+			break
+		}
+		if !isTransientNetErr(err) || attempt == 2 {
+			return "", err
+		}
+		time.Sleep(time.Duration(attempt+1) * 400 * time.Millisecond)
 	}
 	defer resp.Body.Close()
 
@@ -67,6 +78,9 @@ func (az *AzureService) getToken() (string, error) {
 	var tokenResp TokenResponse
 	if err := json.Unmarshal(body, &tokenResp); err != nil {
 		return "", err
+	}
+	if tokenResp.AccessToken == "" {
+		return "", fmt.Errorf("获取 Azure token 失败 (HTTP %d): %s", resp.StatusCode, string(body))
 	}
 
 	az.token = tokenResp.AccessToken
@@ -87,13 +101,41 @@ func (az *AzureService) getToken() (string, error) {
 	return az.token, nil
 }
 
+func isTransientNetErr(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := strings.ToLower(err.Error())
+	return strings.Contains(msg, "eof") ||
+		strings.Contains(msg, "connection reset") ||
+		strings.Contains(msg, "broken pipe")
+}
+
 func (az *AzureService) request(method, url string, body io.Reader) (*http.Response, error) {
+	if body == nil {
+		return az.requestWithRetry(method, url, nil, 3)
+	}
+	raw, err := io.ReadAll(body)
+	if err != nil {
+		return nil, err
+	}
+	if strings.EqualFold(method, "GET") {
+		return az.requestWithRetry(method, url, raw, 3)
+	}
+	return az.requestOnce(method, url, raw)
+}
+
+func (az *AzureService) requestOnce(method, url string, bodyBytes []byte) (*http.Response, error) {
 	token, err := az.getToken()
 	if err != nil {
 		return nil, err
 	}
 
-	req, err := http.NewRequest(method, url, body)
+	var reader io.Reader
+	if bodyBytes != nil {
+		reader = bytes.NewReader(bodyBytes)
+	}
+	req, err := http.NewRequest(method, url, reader)
 	if err != nil {
 		return nil, err
 	}
@@ -102,6 +144,31 @@ func (az *AzureService) request(method, url string, body io.Reader) (*http.Respo
 	req.Header.Set("Content-Type", "application/json")
 
 	return az.Client.Do(req)
+}
+
+func (az *AzureService) requestWithRetry(method, url string, bodyBytes []byte, maxAttempts int) (*http.Response, error) {
+	if maxAttempts < 1 {
+		maxAttempts = 1
+	}
+	var lastErr error
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		resp, err := az.requestOnce(method, url, bodyBytes)
+		if err == nil {
+			// Retry transient 429/503 only when caller allows multiple attempts
+			if (resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode == http.StatusServiceUnavailable) && attempt < maxAttempts-1 {
+				resp.Body.Close()
+				time.Sleep(time.Duration(attempt+1) * time.Second)
+				continue
+			}
+			return resp, nil
+		}
+		lastErr = err
+		if !isTransientNetErr(err) || attempt == maxAttempts-1 {
+			return nil, err
+		}
+		time.Sleep(time.Duration(attempt+1) * 500 * time.Millisecond)
+	}
+	return nil, lastErr
 }
 
 func (az *AzureService) ListVMs() ([]map[string]interface{}, error) {
@@ -330,23 +397,28 @@ type BalanceResult struct {
 }
 
 func (az *AzureService) GetSubscriptionBalance() (*BalanceResult, error) {
-	// 方法1: 尝试 Consumption API
+	// 方法1: 尝试 Consumption API (EA)
 	balance, err := az.getBalanceFromConsumptionAPI()
-	if err == nil && balance.Total > 0 {
+	if err == nil && balance != nil {
 		return balance, nil
 	}
 
-	// 方法2: 尝试 Billing API
+	// 方法2: 尝试 Billing API (MCA)
 	balance, err = az.getBalanceFromBillingAPI()
-	if err == nil && balance.Total > 0 {
+	if err == nil && balance != nil {
 		return balance, nil
 	}
 
-	// 返回默认值（硬编码）
-	return &BalanceResult{
-		Total:    691.06,
-		Currency: "CNY",
-	}, nil
+	// 方法3: 基于 Cost Management 累计消费与已配置的初始赠金推算
+	overview, ovErr := az.GetCostAndCreditOverview(az.Account.CreditMonitor)
+	if ovErr == nil && overview != nil && overview.EstimatedRemainingUSD != nil {
+		return &BalanceResult{
+			Total:    *overview.EstimatedRemainingUSD,
+			Currency: "USD",
+		}, nil
+	}
+
+	return nil, fmt.Errorf("当前订阅不支持直接读取官方余额接口，请使用 Cost Management 消费查询并配置初始赠金")
 }
 
 func (az *AzureService) GetAccountBalance() (*provider.AccountBalance, error) {

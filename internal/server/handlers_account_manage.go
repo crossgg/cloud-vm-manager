@@ -151,6 +151,7 @@ func saveAccount(c *gin.Context) {
 	}
 
 	origAccount := strings.TrimSpace(payload.OriginalAccount)
+	preserveMonitorFields(provider, origAccount, account, payload.Fields)
 	if origAccount != "" && origAccount != account {
 		_ = config.DeleteCloudAccount(configPath, provider, origAccount)
 	}
@@ -204,6 +205,44 @@ func deleteAccount(c *gin.Context) {
 		"success": true,
 		"message": fmt.Sprintf("账号 [%s] %s 已成功删除并热重载生效。", strings.ToUpper(provider), account),
 	})
+}
+
+// preserveMonitorFields retains existing account-level monitor settings when editing credentials via Settings.
+func preserveMonitorFields(provider, origAccount, account string, fields map[string]string) {
+	lookupName := origAccount
+	if lookupName == "" {
+		lookupName = account
+	}
+	runtimeState.mu.RLock()
+	cfg := runtimeState.cfg
+	runtimeState.mu.RUnlock()
+	if cfg == nil {
+		return
+	}
+	switch provider {
+	case "azure":
+		for _, acc := range cfg.AzureAccounts {
+			if strings.EqualFold(acc.Name, lookupName) {
+				for k, v := range config.AzureCreditConfigFields(acc.CreditMonitor) {
+					if _, exists := fields[k]; !exists && v != "" {
+						fields[k] = v
+					}
+				}
+				break
+			}
+		}
+	case "oci":
+		for _, acc := range cfg.OCIAccounts {
+			if strings.EqualFold(acc.Name, lookupName) {
+				for k, v := range config.DTMonitorConfigFields(acc.DTMonitor) {
+					if _, exists := fields[k]; !exists && v != "" {
+						fields[k] = v
+					}
+				}
+				break
+			}
+		}
+	}
 }
 
 func uploadKeyFile(c *gin.Context) {

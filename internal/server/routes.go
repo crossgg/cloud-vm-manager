@@ -143,6 +143,16 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 	r.POST("/api/azure/:account/security-groups/:nsg/rules", saveAzureNSGRule)
 	r.DELETE("/api/azure/:account/security-groups/:nsg/rules/:rule", deleteAzureNSGRule)
 
+	// Azure Cost, Credit Monitor & Orphan Resource Cleanup
+	r.GET("/api/azure/:account/cost-overview", getAzureCostOverview)
+	r.GET("/api/azure/:account/resources", scanAzureResources)
+	r.POST("/api/azure/:account/resources/cleanup", cleanupAzureResources)
+	r.GET("/api/azure/:account/monitor/config", getAzureMonitorConfig)
+	r.POST("/api/azure/:account/monitor/config", saveAzureMonitorConfig)
+	r.POST("/api/azure/:account/monitor/start", startAzureMonitor)
+	r.POST("/api/azure/:account/monitor/stop", stopAzureMonitor)
+	r.GET("/api/azure/:account/monitor/status", getAzureMonitorStatus)
+
 	// OCI data transfer monitoring APIs
 	r.GET("/api/oci/:account/data-transfer", getOCIDataTransfer)
 	r.GET("/api/oci/:account/data-transfer/config", getDataTransferConfig)

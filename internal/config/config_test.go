@@ -1,6 +1,11 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
 
 func TestParseBlockConfig(t *testing.T) {
 	cfg, err := parseBlockConfig(`
@@ -56,5 +61,62 @@ azure=end
 	}
 	if len(cfg.OCIAccounts) != 1 || cfg.OCIAccounts[0].Region != "ap-tokyo-1" || cfg.OCIAccounts[0].CompartmentID == "" {
 		t.Fatalf("unexpected oci accounts: %+v", cfg.OCIAccounts)
+	}
+}
+
+func TestSaveAndLoadAzureCreditConfig(t *testing.T) {
+	tmpDir := t.TempDir()
+	confPath := filepath.Join(tmpDir, "config.conf")
+	initial := `azure=begin
+[az001]
+group=azure
+subscription_id=sub-1
+tenant_id=tenant-1
+client_id=client-1
+client_secret=secret-1
+resource_group=rg-1
+location=koreacentral
+azure=end
+`
+	if err := os.WriteFile(confPath, []byte(initial), 0600); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	want := AzureCreditMonitorConfig{
+		Enabled:              true,
+		Interval:             1800,
+		InitialCredit:        100,
+		StartDate:            "2026-04-01",
+		ExpireDate:           "2027-04-01",
+		MinRemainingCredit:   10,
+		DaysBeforeExpire:     7,
+		MaxMonthlyCost:       15,
+		TriggerAction:        "cleanup_orphans",
+		ConfirmAutoDeleteAll: false,
+	}
+	if err := SaveAzureCreditConfig(confPath, "az001", want); err != nil {
+		t.Fatalf("SaveAzureCreditConfig failed: %v", err)
+	}
+
+	raw, err := os.ReadFile(confPath)
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	cfg, err := parseBlockConfig(string(raw))
+	if err != nil {
+		t.Fatalf("parseBlockConfig failed: %v", err)
+	}
+	if len(cfg.AzureAccounts) != 1 {
+		t.Fatalf("expected 1 azure account, got %d", len(cfg.AzureAccounts))
+	}
+	got := cfg.AzureAccounts[0].CreditMonitor
+	if !got.Enabled || got.Interval != 1800 || got.InitialCredit != 100 ||
+		got.StartDate != "2026-04-01" || got.ExpireDate != "2027-04-01" ||
+		got.MinRemainingCredit != 10 || got.DaysBeforeExpire != 7 ||
+		got.MaxMonthlyCost != 15 || got.TriggerAction != "cleanup_orphans" {
+		t.Fatalf("unexpected credit config: %+v", got)
+	}
+	if !strings.Contains(string(raw), "subscription_id=sub-1") {
+		t.Fatalf("existing account keys were lost: %s", string(raw))
 	}
 }

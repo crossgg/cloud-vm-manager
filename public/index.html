@@ -505,6 +505,207 @@
             </div>
           </div>
 
+          <!-- Azure Account Horizontal Tab Bar -->
+          <div id="azure-workspace-tabs" class="oci-workspace-tabs" hidden>
+            <button class="azure-ws-tab oci-ws-tab active" type="button" data-azure-tab="instances"><i class="bi bi-cpu"></i> 实例管理</button>
+            <button class="azure-ws-tab oci-ws-tab" type="button" data-azure-tab="billing"><i class="bi bi-wallet2"></i> 赠金与消费</button>
+            <button class="azure-ws-tab oci-ws-tab" type="button" data-azure-tab="resources"><i class="bi bi-trash3"></i> 资源与孤立清理</button>
+          </div>
+
+          <!-- Azure Tab: Billing & Credit Monitor -->
+          <div id="azure-tab-billing" class="azure-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-wallet2"></i> Azure 赠金估算与消费查询</h3>
+                  <p id="az-billing-meta">正在读取...</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="az-billing-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新消费</button>
+                  <button id="az-mon-settings-toggle" class="ghost-btn" type="button"><i class="bi bi-gear"></i> 赠金与监控设置</button>
+                </div>
+              </div>
+
+              <div id="az-credit-guide-banner" class="az-guide-banner" hidden>
+                <div class="az-guide-icon"><i class="bi bi-info-circle"></i></div>
+                <div class="az-guide-body">
+                  <strong>尚未完整配置初始赠金或起止日期，当前展示 Cost Management 实际消费明细</strong>
+                  <p>
+                    Azure 学生订阅未向 API 直接开放剩余赠金与到期日期接口。你可以前往以下页面核对并填入参数：
+                    <br>1. <a href="https://www.microsoftazuresponsorships.com/balance" target="_blank" rel="noopener noreferrer">Microsoft Azure Sponsorships 门户</a>：直接查看精确<strong>剩余赠金</strong>与<strong>到期日期</strong>。
+                    <br>2. <strong>Azure Portal</strong> → 搜索 <strong>成本管理 + 计费 (Cost Management + Billing)</strong> 或 <strong>教育 (Education)</strong>：查看订阅激活起始日与剩余额度。
+                  </p>
+                  <button id="az-guide-open-settings-btn" class="secondary-btn oci-ip-btn-sm" type="button">立即填写赠金与起止日期</button>
+                </div>
+              </div>
+
+              <div class="dt-stats-grid az-billing-stats">
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">本月至今消费</span>
+                  <strong id="az-mtd-cost">--</strong>
+                  <small id="az-mtd-sub" class="stat-meta">--</small>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">累计已消耗</span>
+                  <strong id="az-period-cost">--</strong>
+                  <small id="az-period-sub" class="stat-meta">--</small>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">估算剩余赠金</span>
+                  <strong id="az-remaining-credit">--</strong>
+                  <small id="az-remaining-sub" class="stat-meta">--</small>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">距离赠金到期 / 监控</span>
+                  <strong id="az-expire-days">--</strong>
+                  <span id="az-monitor-status" class="dt-monitor-status-badge off" style="margin-top: 6px;">未启用</span>
+                </div>
+              </div>
+
+              <div id="az-mon-settings-panel" class="dt-settings-area" hidden>
+                <div class="dt-settings-divider">
+                  <span>赠金参数与临期/低余额自动监控设置</span>
+                </div>
+                <div class="dt-settings-fields">
+                  <div class="form-grid-equal">
+                    <label class="field compact">
+                      <span>初始赠金额度 (USD)</span>
+                      <input id="az-mon-initial" type="number" min="0" step="0.01" placeholder="学生订阅通常为 100">
+                    </label>
+                    <label class="field compact">
+                      <span>赠金开始日期</span>
+                      <input id="az-mon-start-date" type="date">
+                    </label>
+                    <label class="field compact">
+                      <span>赠金到期日期</span>
+                      <input id="az-mon-expire-date" type="date">
+                    </label>
+                  </div>
+
+                  <label class="switch-row">
+                    <input id="az-mon-enabled" type="checkbox">
+                    <span>启用周期检测（后台定时检查消费与到期时间）</span>
+                  </label>
+
+                  <div class="form-grid-equal">
+                    <label class="field compact">
+                      <span>检测周期（秒，最低 300）</span>
+                      <input id="az-mon-interval" type="number" min="300" step="60" value="3600">
+                    </label>
+                    <label class="field compact">
+                      <span>到期前 ≤ N 天触发（0 不启用）</span>
+                      <input id="az-mon-days-before" type="number" min="0" step="1" value="0" placeholder="例如 7">
+                    </label>
+                    <label class="field compact">
+                      <span>剩余赠金 ≤ X USD 触发（0 不启用）</span>
+                      <input id="az-mon-min-remaining" type="number" min="0" step="0.5" value="0" placeholder="例如 10">
+                    </label>
+                    <label class="field compact">
+                      <span>当月消费 ≥ Y USD 触发（0 不启用）</span>
+                      <input id="az-mon-max-monthly" type="number" min="0" step="0.5" value="0" placeholder="例如 15">
+                    </label>
+                  </div>
+
+                  <label class="field compact">
+                    <span>达到条件时触发动作</span>
+                    <select id="az-mon-action">
+                      <option value="alert">仅记录告警日志（最安全，不改动资源）</option>
+                      <option value="deallocate">自动停止全部 VM（Deallocate，注意 Standard IP 仍可能小额计费）</option>
+                      <option value="cleanup_orphans">自动清理孤立资源（仅删未绑定 IP、孤立磁盘、孤立网卡、快照，保留在用 VM）</option>
+                      <option value="delete_all">自动删除全部计费资源（高危：将删除含 VM 在内的计费资源）</option>
+                    </select>
+                  </label>
+
+                  <label id="az-mon-confirm-delete-row" class="switch-row az-danger-switch" hidden>
+                    <input id="az-mon-confirm-delete-all" type="checkbox">
+                    <span>我确认：达到触发条件时允许自动删除含 VM 在内的全部计费资源（不可恢复）</span>
+                  </label>
+                </div>
+                <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                  <button id="az-mon-save-btn" class="primary-btn" type="button">保存赠金与监控配置</button>
+                  <button id="az-mon-start-btn" class="secondary-btn" type="button">立即启动监控</button>
+                  <button id="az-mon-stop-btn" class="ghost-btn" type="button">停止监控</button>
+                </div>
+                <div id="az-mon-config-message" class="form-message"></div>
+              </div>
+
+              <div id="az-billing-breakdown-wrap" class="az-billing-split">
+                <div class="az-billing-box">
+                  <h4>本月按服务消费明细</h4>
+                  <div id="az-service-cost-list" class="empty-state compact">点击「刷新消费」读取数据</div>
+                </div>
+                <div class="az-billing-box">
+                  <h4>近 12 个月消费趋势</h4>
+                  <div id="az-monthly-cost-list" class="empty-state compact">点击「刷新消费」读取数据</div>
+                </div>
+              </div>
+
+              <div class="dt-logs-wrap">
+                <div class="oci-ip-section-label">监控与触发日志：</div>
+                <div id="az-monitor-logs" class="oci-task-logs">暂无监控日志</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Azure Tab: Resource & Orphan Cleanup -->
+          <div id="azure-tab-resources" class="azure-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-trash3"></i> 资源与孤立计费项扫描清理</h3>
+                  <p id="az-resources-meta">检测未绑定公网 IP、未挂载磁盘、孤立网卡、快照与潜在计费风险</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <select id="az-resource-scope" class="az-scope-select" title="扫描范围">
+                    <option value="rg">仅当前配置资源组</option>
+                    <option value="subscription">整个订阅（自动排除系统 NetworkWatcherRG）</option>
+                  </select>
+                  <button id="az-resources-scan-btn" class="secondary-btn" type="button"><i class="bi bi-search"></i> 扫描资源</button>
+                </div>
+              </div>
+
+              <div class="dt-stats-grid az-resource-stats">
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">扫描资源总数</span>
+                  <strong id="az-res-total">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">未绑定公网 IP</span>
+                  <strong id="az-res-orphan-ips">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">未挂载孤立磁盘</span>
+                  <strong id="az-res-orphan-disks">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">潜在计费 / 快照</span>
+                  <strong id="az-res-billable">--</strong>
+                </div>
+              </div>
+
+              <div class="az-cleanup-toolbar">
+                <div class="az-cleanup-orphan-options">
+                  <span class="az-toolbar-label">孤立资源清理范围：</span>
+                  <label class="az-check-chip"><input id="az-opt-orphan-ips" type="checkbox" checked> 未绑定公网 IP</label>
+                  <label class="az-check-chip"><input id="az-opt-orphan-disks" type="checkbox" checked> 孤立磁盘</label>
+                  <label class="az-check-chip"><input id="az-opt-orphan-nics" type="checkbox" checked> 孤立网卡</label>
+                  <label class="az-check-chip"><input id="az-opt-snapshots" type="checkbox"> 磁盘快照</label>
+                  <button id="az-clean-orphans-btn" class="secondary-btn oci-ip-btn-sm" type="button"><i class="bi bi-stars"></i> 清理选中孤立项</button>
+                </div>
+                <div class="az-cleanup-danger-actions">
+                  <button id="az-clean-selected-btn" class="ghost-btn oci-ip-btn-sm" type="button">删除表格勾选资源</button>
+                  <label class="az-check-chip" title="勾选后一键删除将保留免费的 VNet 与 NSG 框架"><input id="az-opt-keep-network" type="checkbox" checked> 保留免费 VNet/NSG</label>
+                  <button id="az-clean-all-btn" class="ghost-btn oci-ip-btn-sm oci-ip-btn-danger" type="button"><i class="bi bi-exclamation-triangle"></i> 一键删除所有计费项目</button>
+                </div>
+              </div>
+
+              <div id="az-resources-message" class="form-message"></div>
+              <div id="az-resources-table-wrap">
+                <div class="empty-state compact">点击「扫描资源」查看当前账号下的资源绑定状态与计费风险。</div>
+              </div>
+            </div>
+          </div>
+
           <div id="vm-list" class="vm-list">
             <div class="empty-state">请选择一个账号加载机器。</div>
           </div>
@@ -1436,6 +1637,31 @@
         <button id="oci-rt-save" class="primary-btn" type="button">保存路由规则</button>
       </div>
       <div id="oci-rt-message" class="form-message"></div>
+    </div>
+  </div>
+
+  <!-- Azure Cleanup Confirmation Modal -->
+  <div id="azure-cleanup-modal" class="modal-overlay" hidden>
+    <div class="modal-panel account-modal-panel">
+      <div class="modal-header">
+        <h3 id="azure-cleanup-modal-title">确认清理 Azure 资源</h3>
+        <button id="azure-cleanup-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <p id="azure-cleanup-modal-desc" style="margin-top: 0; color: var(--muted); font-size: 13px;"></p>
+        <div id="azure-cleanup-preview-list" class="az-cleanup-preview-list"></div>
+        <div id="azure-cleanup-confirm-box" class="az-danger-confirm-box" hidden>
+          <label class="switch-row">
+            <input id="azure-cleanup-highrisk-check" type="checkbox">
+            <span>我已知晓删除后无法恢复（包含在用 VM / 磁盘 / IP），确认执行删除</span>
+          </label>
+        </div>
+        <div id="azure-cleanup-modal-msg" class="form-message"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="azure-cleanup-modal-cancel" class="secondary-btn" type="button">取消</button>
+        <button id="azure-cleanup-modal-confirm" class="primary-btn" type="button">确认删除</button>
+      </div>
     </div>
   </div>
 

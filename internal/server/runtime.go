@@ -78,7 +78,6 @@ func ReloadRuntimeConfig() error {
 	}
 
 	runtimeState.mu.Lock()
-	defer runtimeState.mu.Unlock()
 	runtimeState.cfg = cfg
 	runtimeState.configPath = path
 	runtimeState.configModTime = configModTime(path)
@@ -88,6 +87,10 @@ func ReloadRuntimeConfig() error {
 	runtimeState.cloudAccounts = next.cloudAccounts
 	runtimeState.cloudflare = next.cloudflare
 	runtimeState.lastReloadError = ""
+	runtimeState.mu.Unlock()
+
+	stopAllAzureMonitors()
+	InitAzureMonitors()
 	return nil
 }
 

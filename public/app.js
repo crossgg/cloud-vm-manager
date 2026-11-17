@@ -701,6 +701,7 @@ async function loadAccount(account) {
     el.classList.toggle('active', el.dataset.provider === account.provider && el.dataset.account === account.account);
   });
   updateOCIWorkspaceVisibility();
+  updateAzureWorkspaceVisibility();
   await fetchVMs();
 }
 
@@ -7853,4 +7854,585 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
   });
+
+  initAzureWorkspaceListeners();
 });
+
+// ==================== Azure Horizontal Workspace (Billing & Orphan Cleanup) ====================
+
+let currentAzureTab = 'instances';
+let lastAzureWorkspaceAccount = '';
+let currentAzureResources = [];
+let currentAzureCleanupPayload = null;
+
+function updateAzureWorkspaceVisibility() {
+  const tabsBar = document.getElementById('azure-workspace-tabs');
+  const isAzure = selectedAccount && selectedAccount.provider === 'azure';
+
+  if (tabsBar) tabsBar.hidden = !isAzure;
+
+  if (!isAzure) {
+    lastAzureWorkspaceAccount = '';
+    document.querySelectorAll('.azure-tab-pane').forEach(el => { el.hidden = true; });
+    return;
+  }
+
+  if (selectedAccount.account !== lastAzureWorkspaceAccount) {
+    lastAzureWorkspaceAccount = selectedAccount.account;
+    currentAzureResources = [];
+    const tableWrap = document.getElementById('az-resources-table-wrap');
+    if (tableWrap) {
+      tableWrap.innerHTML = '<div class="empty-state compact">点击「扫描资源」查看当前账号下的资源绑定状态与计费风险。</div>';
+    }
+  }
+
+  switchAzureTab(currentAzureTab || 'instances');
+}
+
+function switchAzureTab(tab) {
+  currentAzureTab = tab || 'instances';
+  document.querySelectorAll('.azure-ws-tab').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.azureTab === currentAzureTab);
+  });
+
+  const paneMap = {
+    billing: 'azure-tab-billing',
+    resources: 'azure-tab-resources'
+  };
+
+  Object.values(paneMap).forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.hidden = true;
+  });
+
+  if (els.vmList) {
+    els.vmList.hidden = currentAzureTab !== 'instances';
+  }
+
+  if (paneMap[currentAzureTab]) {
+    const target = document.getElementById(paneMap[currentAzureTab]);
+    if (target) target.hidden = false;
+  }
+
+  if (!selectedAccount || selectedAccount.provider !== 'azure') return;
+
+  if (currentAzureTab === 'billing') {
+    loadAzureBillingOverview();
+  } else if (currentAzureTab === 'resources') {
+    loadAzureResources();
+  }
+}
+
+function formatUSD(val) {
+  return `$${Number(val || 0).toFixed(2)}`;
+}
+
+async function loadAzureBillingOverview() {
+  if (!selectedAccount || selectedAccount.provider !== 'azure') return;
+  const acc = selectedAccount.account;
+  const metaEl = document.getElementById('az-billing-meta');
+  if (metaEl) metaEl.textContent = `账号：${acc} · 正在查询 Cost Management 消费数据...`;
+
+  try {
+    const data = await fetchJSON(`/api/azure/${encodeURIComponent(acc)}/cost-overview`);
+    if (!selectedAccount || selectedAccount.account !== acc) return;
+    renderAzureBillingOverview(data.overview, data.monitor);
+  } catch (err) {
+    if (metaEl) metaEl.textContent = `查询失败：${err.message}`;
+    addLog(`Azure 消费查询失败：${err.message}`, 'error');
+  }
+}
+
+function renderAzureBillingOverview(ov, mon) {
+  if (!ov) return;
+  const metaEl = document.getElementById('az-billing-meta');
+  if (metaEl) {
+    const offerTag = ov.isStudentOffer ? '学生/限额订阅' : (ov.quotaId || '标准订阅');
+    metaEl.textContent = `订阅：${ov.subscriptionName || ov.account} | 类型：${offerTag} | 状态：${ov.subscriptionState || '-'} | 消费上限：${ov.spendingLimit || '-'}`;
+  }
+
+  const guideEl = document.getElementById('az-credit-guide-banner');
+  if (guideEl) {
+    guideEl.hidden = ov.hasCreditConfig === true;
+  }
+
+  const billCurr = ov.billingCurrency || 'CNY';
+  const mtdEl = document.getElementById('az-mtd-cost');
+  const mtdSub = document.getElementById('az-mtd-sub');
+  if (mtdEl) mtdEl.textContent = `${formatUSD(ov.monthToDateCostUSD)} USD`;
+  if (mtdSub) {
+    mtdSub.textContent = ov.costStatus === 'ok'
+      ? `计费币种约 ${Number(ov.monthToDateCostBilling || 0).toFixed(2)} ${billCurr}`
+      : (ov.costMessage || 'Cost Management 查询失败');
+  }
+
+  const periodEl = document.getElementById('az-period-cost');
+  const periodSub = document.getElementById('az-period-sub');
+  if (periodEl) periodEl.textContent = `${formatUSD(ov.periodTotalCostUSD)} USD`;
+  if (periodSub) {
+    periodSub.textContent = ov.remainingBasis === 'since_start_date' && ov.startDate
+      ? `自 ${ov.startDate} 起始日至今`
+      : `近 12 个月 (${ov.historyStartDate || ''} ~ ${ov.historyEndDate || ''})`;
+  }
+
+  const remEl = document.getElementById('az-remaining-credit');
+  const remSub = document.getElementById('az-remaining-sub');
+  if (ov.estimatedRemainingUSD !== undefined && ov.estimatedRemainingUSD !== null) {
+    if (remEl) remEl.textContent = `${formatUSD(ov.estimatedRemainingUSD)} USD`;
+    if (remSub) remSub.textContent = `按初始赠金 ${formatUSD(ov.initialCredit)} 扣减估算`;
+  } else {
+    if (remEl) remEl.textContent = '未配置初始赠金';
+    if (remSub) remSub.textContent = '填写初始赠金后自动计算';
+  }
+
+  const expEl = document.getElementById('az-expire-days');
+  if (ov.daysUntilExpire !== undefined && ov.daysUntilExpire !== null) {
+    if (expEl) {
+      expEl.textContent = ov.daysUntilExpire >= 0
+        ? `剩 ${ov.daysUntilExpire} 天`
+        : `已过期 ${Math.abs(ov.daysUntilExpire)} 天`;
+    }
+  } else {
+    if (expEl) expEl.textContent = '未配置到期日';
+  }
+
+  // Service cost breakdown
+  const svcListEl = document.getElementById('az-service-cost-list');
+  if (svcListEl) {
+    if (ov.costStatus !== 'ok') {
+      svcListEl.innerHTML = `<div class="empty-state compact error">${escapeHtml(ov.costMessage || '查询失败')}</div>`;
+    } else if (!ov.monthByService || ov.monthByService.length === 0) {
+      svcListEl.innerHTML = '<div class="empty-state compact">本月暂无消费记录（$0.00）</div>';
+    } else {
+      svcListEl.className = 'az-cost-list';
+      svcListEl.innerHTML = ov.monthByService.map(item => `
+        <div class="az-cost-row">
+          <span>${escapeHtml(item.service)}</span>
+          <span class="az-cost-val">${formatUSD(item.costUSD)} USD <small style="color: var(--muted);">(${Number(item.costBilling || 0).toFixed(2)} ${escapeHtml(billCurr)})</small></span>
+        </div>
+      `).join('');
+    }
+  }
+
+  // Monthly history
+  const histEl = document.getElementById('az-monthly-cost-list');
+  if (histEl) {
+    if (!ov.monthlyHistory || ov.monthlyHistory.length === 0) {
+      histEl.innerHTML = '<div class="empty-state compact">暂无历史月度消费记录</div>';
+    } else {
+      histEl.className = 'az-cost-list';
+      histEl.innerHTML = [...ov.monthlyHistory].reverse().map(m => `
+        <div class="az-cost-row">
+          <span>${escapeHtml(m.month)}</span>
+          <span class="az-cost-val">${formatUSD(m.costUSD)} USD <small style="color: var(--muted);">(${Number(m.costBilling || 0).toFixed(2)} ${escapeHtml(billCurr)})</small></span>
+        </div>
+      `).join('');
+    }
+  }
+
+  if (mon) {
+    renderAzureMonitorStatus(mon);
+  }
+}
+
+function renderAzureMonitorStatus(mon) {
+  const statusEl = document.getElementById('az-monitor-status');
+  if (statusEl) {
+    statusEl.textContent = mon.running ? '运行中' : '未启用';
+    statusEl.className = `dt-monitor-status-badge ${mon.running ? 'on' : 'off'}`;
+  }
+
+  const cfg = mon.config || {};
+  const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+  const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = !!val; };
+
+  setVal('az-mon-initial', cfg.initialCredit > 0 ? cfg.initialCredit : '');
+  setVal('az-mon-start-date', cfg.startDate || '');
+  setVal('az-mon-expire-date', cfg.expireDate || '');
+  setChk('az-mon-enabled', cfg.enabled);
+  setVal('az-mon-interval', cfg.interval || 3600);
+  setVal('az-mon-days-before', cfg.daysBeforeExpire || 0);
+  setVal('az-mon-min-remaining', cfg.minRemainingCredit || 0);
+  setVal('az-mon-max-monthly', cfg.maxMonthlyCost || 0);
+  setVal('az-mon-action', cfg.triggerAction || 'alert');
+  setChk('az-mon-confirm-delete-all', cfg.confirmAutoDeleteAll);
+  updateAzureDangerConfirmVisibility();
+
+  const logsEl = document.getElementById('az-monitor-logs');
+  if (logsEl) {
+    const logs = Array.isArray(mon.logs) ? mon.logs : [];
+    logsEl.textContent = logs.length > 0 ? logs.slice().reverse().join('\n') : '暂无监控日志';
+  }
+}
+
+function updateAzureDangerConfirmVisibility() {
+  const action = document.getElementById('az-mon-action')?.value || 'alert';
+  const row = document.getElementById('az-mon-confirm-delete-row');
+  if (row) {
+    row.hidden = action !== 'delete_all';
+  }
+}
+
+async function saveAzureMonitorConfig() {
+  if (!selectedAccount || selectedAccount.provider !== 'azure') return;
+  const acc = selectedAccount.account;
+  const msgEl = document.getElementById('az-mon-config-message');
+  const btn = document.getElementById('az-mon-save-btn');
+
+  const payload = {
+    enabled: !!document.getElementById('az-mon-enabled')?.checked,
+    interval: Math.max(300, Number(document.getElementById('az-mon-interval')?.value) || 3600),
+    initialCredit: Math.max(0, Number(document.getElementById('az-mon-initial')?.value) || 0),
+    startDate: document.getElementById('az-mon-start-date')?.value || '',
+    expireDate: document.getElementById('az-mon-expire-date')?.value || '',
+    daysBeforeExpire: Math.max(0, Number(document.getElementById('az-mon-days-before')?.value) || 0),
+    minRemainingCredit: Math.max(0, Number(document.getElementById('az-mon-min-remaining')?.value) || 0),
+    maxMonthlyCost: Math.max(0, Number(document.getElementById('az-mon-max-monthly')?.value) || 0),
+    triggerAction: document.getElementById('az-mon-action')?.value || 'alert',
+    confirmAutoDeleteAll: !!document.getElementById('az-mon-confirm-delete-all')?.checked
+  };
+
+  if (btn) btn.disabled = true;
+  if (msgEl) { msgEl.textContent = '正在保存并同步配置...'; msgEl.className = 'form-message'; }
+
+  try {
+    const res = await fetchJSON(`/api/azure/${encodeURIComponent(acc)}/monitor/config`, {
+      method: 'POST',
+      body: payload
+    });
+    if (msgEl) { msgEl.textContent = '已保存赠金与监控配置。'; msgEl.className = 'form-message success'; }
+    if (res.status) renderAzureMonitorStatus(res.status);
+    await loadAzureBillingOverview();
+  } catch (err) {
+    if (msgEl) { msgEl.textContent = err.message; msgEl.className = 'form-message error'; }
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+async function loadAzureResources() {
+  if (!selectedAccount || selectedAccount.provider !== 'azure') return;
+  const acc = selectedAccount.account;
+  const scope = document.getElementById('az-resource-scope')?.value || 'rg';
+  const wrap = document.getElementById('az-resources-table-wrap');
+  const msgEl = document.getElementById('az-resources-message');
+  if (msgEl) { msgEl.textContent = ''; msgEl.className = 'form-message'; }
+  if (wrap) wrap.innerHTML = '<div class="empty-state compact">正在扫描 Azure 资源及绑定关系...</div>';
+
+  try {
+    const data = await fetchJSON(`/api/azure/${encodeURIComponent(acc)}/resources?scope=${encodeURIComponent(scope)}`);
+    if (!selectedAccount || selectedAccount.account !== acc) return;
+    currentAzureResources = Array.isArray(data.items) ? data.items : [];
+    renderAzureResources(data);
+  } catch (err) {
+    if (wrap) wrap.innerHTML = `<div class="empty-state compact error">扫描失败：${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderAzureResources(data) {
+  const s = data.summary || {};
+  const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+  setText('az-res-total', String(s.totalCount ?? 0));
+  setText('az-res-orphan-ips', String(s.orphanPublicIpCount ?? 0));
+  setText('az-res-orphan-disks', String(s.orphanDiskCount ?? 0));
+  setText('az-res-billable', `${s.billableRiskCount ?? 0}（快照 ${s.snapshotCount ?? 0}）`);
+
+  const metaEl = document.getElementById('az-resources-meta');
+  if (metaEl) {
+    const scopeLabel = data.scope === 'rg' && data.targetResourceGroup
+      ? `资源组 ${data.targetResourceGroup}`
+      : '整个订阅（已排除系统 NetworkWatcherRG）';
+    metaEl.textContent = `扫描范围：${scopeLabel} · 孤立资源共 ${s.orphanTotalCount ?? 0} 项`;
+  }
+
+  const wrap = document.getElementById('az-resources-table-wrap');
+  if (!wrap) return;
+  const items = Array.isArray(data.items) ? data.items : [];
+  if (items.length === 0) {
+    wrap.innerHTML = '<div class="empty-state compact">当前扫描范围内未发现资源。</div>';
+    return;
+  }
+
+  const riskLabel = {
+    orphan_billable: '孤立计费',
+    likely_billable: '可能计费',
+    free_eligible: '免费额度内',
+    free_network: '免费网络',
+    unknown: '未知'
+  };
+  const catLabel = {
+    vm: '虚拟机',
+    public_ip: '公网 IP',
+    disk: '托管磁盘',
+    snapshot: '快照',
+    nic: '网卡',
+    vnet: '虚拟网络',
+    nsg: '安全组',
+    other: '其他'
+  };
+
+  wrap.innerHTML = `
+    <div class="az-table-scroll">
+      <table class="az-resource-table">
+        <thead>
+          <tr>
+            <th><input id="az-res-check-all" type="checkbox" title="全选"></th>
+            <th>资源名称</th>
+            <th>类型</th>
+            <th>资源组</th>
+            <th>规格 / 详情</th>
+            <th>绑定状态</th>
+            <th>计费风险评估</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${items.map(item => {
+            const specParts = [];
+            if (item.sku) specParts.push(item.sku);
+            if (item.sizeGB) specParts.push(`${item.sizeGB} GB`);
+            if (item.ipAddress) specParts.push(item.ipAddress);
+            if (item.allocationMethod) specParts.push(item.allocationMethod);
+            const specText = specParts.join(' · ') || '-';
+            const attachHTML = item.orphan
+              ? '<span class="az-risk-badge orphan_billable">孤立未绑定</span>'
+              : (item.attachedTo ? escapeHtml(item.attachedTo) : '<span style="color: var(--muted);">-</span>');
+            return `
+              <tr>
+                <td><input class="az-res-row-check" type="checkbox" value="${escapeAttr(item.id)}"></td>
+                <td><strong>${escapeHtml(item.name)}</strong></td>
+                <td>${escapeHtml(catLabel[item.category] || item.category)}</td>
+                <td><code>${escapeHtml(item.resourceGroup || '-')}</code></td>
+                <td>${escapeHtml(specText)}</td>
+                <td>${attachHTML}</td>
+                <td>
+                  <span class="az-risk-badge ${escapeAttr(item.billingRisk)}">${escapeHtml(riskLabel[item.billingRisk] || item.billingRisk)}</span>
+                  <div style="font-size: 11.5px; color: var(--muted); margin-top: 3px;">${escapeHtml(item.billingNote || '')}</div>
+                </td>
+                <td>
+                  <button class="ghost-btn oci-ip-btn-sm oci-ip-btn-danger az-res-single-del-btn" type="button" data-id="${escapeAttr(item.id)}">删除</button>
+                </td>
+              </tr>
+            `;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function openAzureCleanupModal(spec) {
+  const modal = document.getElementById('azure-cleanup-modal');
+  const titleEl = document.getElementById('azure-cleanup-modal-title');
+  const descEl = document.getElementById('azure-cleanup-modal-desc');
+  const listEl = document.getElementById('azure-cleanup-preview-list');
+  const confirmBox = document.getElementById('azure-cleanup-confirm-box');
+  const highRiskChk = document.getElementById('azure-cleanup-highrisk-check');
+  const msgEl = document.getElementById('azure-cleanup-modal-msg');
+  if (!modal || !listEl) return;
+
+  const previewItems = spec.previewItems || [];
+  if (previewItems.length === 0) {
+    const resMsg = document.getElementById('az-resources-message');
+    if (resMsg) {
+      resMsg.textContent = '当前条件下没有匹配的待清理资源。';
+      resMsg.className = 'form-message';
+    }
+    return;
+  }
+
+  currentAzureCleanupPayload = spec.payload;
+  if (titleEl) titleEl.textContent = spec.title || '确认清理 Azure 资源';
+  if (descEl) descEl.textContent = spec.desc || '';
+  if (msgEl) { msgEl.textContent = ''; msgEl.className = 'form-message'; }
+
+  const needsHighRiskCheck = spec.highRisk || previewItems.some(i => i.category === 'vm' || !i.orphan);
+  if (confirmBox) confirmBox.hidden = !needsHighRiskCheck;
+  if (highRiskChk) highRiskChk.checked = false;
+
+  listEl.innerHTML = previewItems.map(item => `
+    <div class="az-cleanup-preview-item">
+      <span><strong>${escapeHtml(item.name)}</strong> <small style="color: var(--muted);">(${escapeHtml(item.category)} · ${escapeHtml(item.resourceGroup)})</small></span>
+      <span class="az-risk-badge ${escapeAttr(item.billingRisk)}">${item.orphan ? '孤立' : '在用/关联'}</span>
+    </div>
+  `).join('');
+
+  modal.hidden = false;
+}
+
+function closeAzureCleanupModal() {
+  const modal = document.getElementById('azure-cleanup-modal');
+  if (modal) modal.hidden = true;
+  currentAzureCleanupPayload = null;
+}
+
+async function confirmAzureCleanup() {
+  if (!selectedAccount || selectedAccount.provider !== 'azure' || !currentAzureCleanupPayload) return;
+  const confirmBox = document.getElementById('azure-cleanup-confirm-box');
+  const highRiskChk = document.getElementById('azure-cleanup-highrisk-check');
+  const msgEl = document.getElementById('azure-cleanup-modal-msg');
+  const confirmBtn = document.getElementById('azure-cleanup-modal-confirm');
+
+  if (confirmBox && !confirmBox.hidden && !highRiskChk?.checked) {
+    if (msgEl) { msgEl.textContent = '请先勾选二次确认开关后再执行删除。'; msgEl.className = 'form-message error'; }
+    return;
+  }
+
+  const acc = selectedAccount.account;
+  if (confirmBtn) confirmBtn.disabled = true;
+  if (msgEl) { msgEl.textContent = '正在按依赖顺序清理资源（Azure 异步操作可能需要数十秒）...'; msgEl.className = 'form-message'; }
+
+  try {
+    const res = await fetchJSON(`/api/azure/${encodeURIComponent(acc)}/resources/cleanup`, {
+      method: 'POST',
+      body: currentAzureCleanupPayload
+    });
+    if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, res.success ? 'info' : 'error'));
+
+    const resMsg = document.getElementById('az-resources-message');
+    if (resMsg) {
+      const deletedCount = Array.isArray(res.deleted) ? res.deleted.length : 0;
+      const failedCount = Array.isArray(res.failed) ? res.failed.length : 0;
+      resMsg.textContent = failedCount > 0
+        ? `清理完成：成功 ${deletedCount} 项，失败 ${failedCount} 项（详情见底部操作日志）。`
+        : `清理完成：已成功删除 ${deletedCount} 项资源。`;
+      resMsg.className = failedCount > 0 ? 'form-message error' : 'form-message success';
+    }
+
+    closeAzureCleanupModal();
+    await loadAzureResources();
+    await fetchVMs();
+  } catch (err) {
+    if (msgEl) { msgEl.textContent = err.message; msgEl.className = 'form-message error'; }
+  } finally {
+    if (confirmBtn) confirmBtn.disabled = false;
+  }
+}
+
+function initAzureWorkspaceListeners() {
+  document.getElementById('azure-workspace-tabs')?.addEventListener('click', e => {
+    const btn = e.target.closest('.azure-ws-tab');
+    if (!btn) return;
+    switchAzureTab(btn.dataset.azureTab);
+  });
+
+  document.getElementById('az-billing-refresh-btn')?.addEventListener('click', loadAzureBillingOverview);
+  document.getElementById('az-mon-settings-toggle')?.addEventListener('click', () => {
+    const p = document.getElementById('az-mon-settings-panel');
+    if (p) p.hidden = !p.hidden;
+  });
+  document.getElementById('az-guide-open-settings-btn')?.addEventListener('click', () => {
+    const p = document.getElementById('az-mon-settings-panel');
+    if (p) {
+      p.hidden = false;
+      p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+    document.getElementById('az-mon-initial')?.focus();
+  });
+  document.getElementById('az-mon-action')?.addEventListener('change', updateAzureDangerConfirmVisibility);
+  document.getElementById('az-mon-save-btn')?.addEventListener('click', saveAzureMonitorConfig);
+  document.getElementById('az-mon-start-btn')?.addEventListener('click', async () => {
+    if (!selectedAccount || selectedAccount.provider !== 'azure') return;
+    const res = await fetchJSON(`/api/azure/${encodeURIComponent(selectedAccount.account)}/monitor/start`, { method: 'POST' });
+    if (res.status) renderAzureMonitorStatus(res.status);
+  });
+  document.getElementById('az-mon-stop-btn')?.addEventListener('click', async () => {
+    if (!selectedAccount || selectedAccount.provider !== 'azure') return;
+    await fetchJSON(`/api/azure/${encodeURIComponent(selectedAccount.account)}/monitor/stop`, { method: 'POST' });
+    await loadAzureBillingOverview();
+  });
+
+  document.getElementById('az-resources-scan-btn')?.addEventListener('click', loadAzureResources);
+  document.getElementById('az-resource-scope')?.addEventListener('change', loadAzureResources);
+
+  document.getElementById('az-resources-table-wrap')?.addEventListener('change', e => {
+    if (e.target.id === 'az-res-check-all') {
+      const checked = e.target.checked;
+      document.querySelectorAll('.az-res-row-check').forEach(cb => { cb.checked = checked; });
+    }
+  });
+
+  document.getElementById('az-resources-table-wrap')?.addEventListener('click', e => {
+    const delBtn = e.target.closest('.az-res-single-del-btn');
+    if (!delBtn) return;
+    const id = delBtn.dataset.id;
+    const item = currentAzureResources.find(r => r.id === id);
+    if (!item) return;
+    openAzureCleanupModal({
+      title: '确认删除单个资源',
+      desc: `即将从 Azure 删除以下资源（资源组：${item.resourceGroup}）：`,
+      previewItems: [item],
+      highRisk: item.category === 'vm' || !item.orphan,
+      payload: {
+        mode: 'selected',
+        scope: document.getElementById('az-resource-scope')?.value || 'rg',
+        resourceIds: [item.id]
+      }
+    });
+  });
+
+  document.getElementById('az-clean-orphans-btn')?.addEventListener('click', () => {
+    const incIP = !!document.getElementById('az-opt-orphan-ips')?.checked;
+    const incDisk = !!document.getElementById('az-opt-orphan-disks')?.checked;
+    const incNIC = !!document.getElementById('az-opt-orphan-nics')?.checked;
+    const incSnap = !!document.getElementById('az-opt-snapshots')?.checked;
+    const preview = currentAzureResources.filter(i =>
+      (incIP && i.category === 'public_ip' && i.orphan) ||
+      (incDisk && i.category === 'disk' && i.orphan) ||
+      (incNIC && i.category === 'nic' && i.orphan) ||
+      (incSnap && i.category === 'snapshot')
+    );
+    openAzureCleanupModal({
+      title: '确认清理孤立计费资源',
+      desc: '以下为当前筛选出的未绑定/孤立资源（不会影响在用免费 VM）：',
+      previewItems: preview,
+      highRisk: false,
+      payload: {
+        mode: 'orphans',
+        scope: document.getElementById('az-resource-scope')?.value || 'rg',
+        includeOrphanIps: incIP,
+        includeOrphanDisks: incDisk,
+        includeOrphanNics: incNIC,
+        includeSnapshots: incSnap
+      }
+    });
+  });
+
+  document.getElementById('az-clean-selected-btn')?.addEventListener('click', () => {
+    const ids = Array.from(document.querySelectorAll('.az-res-row-check:checked')).map(cb => cb.value);
+    const preview = currentAzureResources.filter(i => ids.includes(i.id));
+    openAzureCleanupModal({
+      title: '确认删除表格勾选资源',
+      desc: `已勾选 ${preview.length} 项资源，将按依赖顺序（VM → 网卡 → IP → 磁盘）执行删除：`,
+      previewItems: preview,
+      highRisk: preview.some(i => i.category === 'vm' || !i.orphan),
+      payload: {
+        mode: 'selected',
+        scope: document.getElementById('az-resource-scope')?.value || 'rg',
+        resourceIds: ids
+      }
+    });
+  });
+
+  document.getElementById('az-clean-all-btn')?.addEventListener('click', () => {
+    const keepNet = !!document.getElementById('az-opt-keep-network')?.checked;
+    const preview = currentAzureResources.filter(i => !(keepNet && (i.category === 'vnet' || i.category === 'nsg')));
+    openAzureCleanupModal({
+      title: '⚠️ 高危：一键删除所有计费项目',
+      desc: keepNet
+        ? '将按依赖顺序删除以下全部计费资源（含在用 VM、磁盘、公网 IP、网卡、快照），保留免费 VNet/NSG 框架：'
+        : '将按依赖顺序删除扫描范围内的全部资源（含 VM、磁盘、IP、网卡、快照、VNet 与 NSG）：',
+      previewItems: preview,
+      highRisk: true,
+      payload: {
+        mode: 'all_billable',
+        scope: document.getElementById('az-resource-scope')?.value || 'rg',
+        includeNetwork: !keepNet
+      }
+    });
+  });
+
+  document.getElementById('azure-cleanup-modal-close')?.addEventListener('click', closeAzureCleanupModal);
+  document.getElementById('azure-cleanup-modal-cancel')?.addEventListener('click', closeAzureCleanupModal);
+  document.getElementById('azure-cleanup-modal-confirm')?.addEventListener('click', confirmAzureCleanup);
+}

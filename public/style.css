@@ -3824,3 +3824,243 @@ button {
   font-family: 'JetBrains Mono', monospace;
   font-size: 11.5px;
 }
+
+/* Azure Billing, Credit Monitor & Orphan Resource Cleanup */
+.az-guide-banner {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  margin-bottom: 16px;
+  border: 1px solid rgba(59, 130, 246, 0.35);
+  border-radius: var(--radius-md);
+  background: rgba(59, 130, 246, 0.09);
+}
+
+.az-guide-banner[hidden] {
+  display: none;
+}
+
+.az-guide-icon {
+  font-size: 20px;
+  color: #60a5fa;
+  line-height: 1.2;
+  flex-shrink: 0;
+}
+
+.az-guide-body {
+  flex: 1;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.az-guide-body strong {
+  color: var(--text);
+}
+
+.az-guide-body p {
+  margin: 6px 0 10px;
+  color: var(--muted);
+}
+
+.az-guide-body a {
+  color: #60a5fa;
+  text-decoration: underline;
+}
+
+.az-billing-stats,
+.az-resource-stats {
+  margin-bottom: 16px;
+}
+
+.az-billing-split {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 14px;
+  margin-top: 14px;
+  margin-bottom: 14px;
+}
+
+.az-billing-box {
+  padding: 14px 16px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+}
+
+.az-billing-box h4 {
+  margin: 0 0 10px;
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.az-cost-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.az-cost-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  font-size: 12.5px;
+}
+
+.az-cost-row .az-cost-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.az-danger-switch {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+  color: #f87171;
+}
+
+.az-scope-select {
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--panel-border);
+  background: var(--panel-soft);
+  color: var(--text);
+  font-size: 12.5px;
+}
+
+.az-cleanup-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 14px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+}
+
+.az-cleanup-orphan-options,
+.az-cleanup-danger-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.az-toolbar-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.az-check-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--panel-border);
+  background: var(--panel);
+  font-size: 12px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.az-table-scroll {
+  overflow-x: auto;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+}
+
+.az-resource-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+
+.az-resource-table th,
+.az-resource-table td {
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 1px solid var(--panel-border);
+  vertical-align: middle;
+}
+
+.az-resource-table th {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--muted);
+  background: var(--panel-soft);
+  white-space: nowrap;
+}
+
+.az-resource-table tr:last-child td {
+  border-bottom: none;
+}
+
+.az-risk-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.az-risk-badge.orphan_billable {
+  background: rgba(239, 68, 68, 0.16);
+  color: #f87171;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+}
+
+.az-risk-badge.likely_billable {
+  background: rgba(245, 158, 11, 0.16);
+  color: #fbbf24;
+  border: 1px solid rgba(245, 158, 11, 0.35);
+}
+
+.az-risk-badge.free_eligible,
+.az-risk-badge.free_network {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+}
+
+.az-cleanup-preview-list {
+  max-height: 240px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.az-cleanup-preview-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-sm);
+  background: var(--panel-soft);
+  font-size: 12.5px;
+}
+
+.az-danger-confirm-box {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  background: rgba(239, 68, 68, 0.08);
+  margin-bottom: 10px;
+}

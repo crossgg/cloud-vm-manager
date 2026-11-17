@@ -32,14 +32,47 @@ type UpdateConfig struct {
 }
 
 type AzureConfig struct {
-	Name          string `yaml:"-"`
-	Group         string `yaml:"-"`
-	TenantId      string `yaml:"tenant_id"`
-	ClientId      string `yaml:"client_id"`
-	ClientSecret  string `yaml:"client_secret"`
-	SubId         string `yaml:"subscription_id"`
-	ResourceGroup string `yaml:"resource_group"`
-	Location      string `yaml:"location"`
+	Name          string                   `yaml:"-"`
+	Group         string                   `yaml:"-"`
+	TenantId      string                   `yaml:"tenant_id"`
+	ClientId      string                   `yaml:"client_id"`
+	ClientSecret  string                   `yaml:"client_secret"`
+	SubId         string                   `yaml:"subscription_id"`
+	ResourceGroup string                   `yaml:"resource_group"`
+	Location      string                   `yaml:"location"`
+	CreditMonitor AzureCreditMonitorConfig `yaml:"credit_monitor"`
+}
+
+type AzureCreditMonitorConfig struct {
+	Enabled              bool    `json:"enabled" yaml:"enabled"`
+	Interval             int     `json:"interval" yaml:"interval"`                         // check interval in seconds, default 3600
+	InitialCredit        float64 `json:"initialCredit" yaml:"initial_credit"`             // e.g. 100 (USD); <=0 means unset
+	StartDate            string  `json:"startDate" yaml:"start_date"`                     // YYYY-MM-DD (optional)
+	ExpireDate           string  `json:"expireDate" yaml:"expire_date"`                   // YYYY-MM-DD (optional)
+	MinRemainingCredit   float64 `json:"minRemainingCredit" yaml:"min_remaining_credit"`  // trigger when remaining <= threshold
+	DaysBeforeExpire     int     `json:"daysBeforeExpire" yaml:"days_before_expire"`      // trigger when days left <= threshold
+	MaxMonthlyCost       float64 `json:"maxMonthlyCost" yaml:"max_monthly_cost"`          // trigger when monthly cost >= threshold
+	TriggerAction        string  `json:"triggerAction" yaml:"trigger_action"`             // "alert" | "deallocate" | "cleanup_orphans" | "delete_all"
+	ConfirmAutoDeleteAll bool    `json:"confirmAutoDeleteAll" yaml:"confirm_delete_all"`  // explicit safety opt-in for delete_all
+}
+
+func (c *AzureCreditMonitorConfig) Normalize() {
+	if c.Interval <= 0 {
+		c.Interval = 3600
+	} else if c.Interval < 300 {
+		c.Interval = 300
+	}
+	c.StartDate = strings.TrimSpace(c.StartDate)
+	c.ExpireDate = strings.TrimSpace(c.ExpireDate)
+	switch strings.ToLower(strings.TrimSpace(c.TriggerAction)) {
+	case "deallocate", "cleanup_orphans", "delete_all":
+		c.TriggerAction = strings.ToLower(strings.TrimSpace(c.TriggerAction))
+	default:
+		c.TriggerAction = "alert"
+	}
+	if c.TriggerAction != "delete_all" {
+		c.ConfirmAutoDeleteAll = false
+	}
 }
 
 type GCPConfig struct {
@@ -387,6 +420,19 @@ func parseBlockConfig(content string) (*Config, error) {
 	cfg := &Config{}
 	for _, name := range sortedSectionNames(sections["azure"]) {
 		values := sections["azure"][name]
+		creditCfg := AzureCreditMonitorConfig{
+			Enabled:              boolValue(values["az_credit_enabled"]),
+			Interval:             intValueOrDefault(values["az_credit_interval"], 3600),
+			InitialCredit:        floatValueOrDefault(values["az_credit_initial"], 0),
+			StartDate:            values["az_credit_start_date"],
+			ExpireDate:           values["az_credit_expire_date"],
+			MinRemainingCredit:   floatValueOrDefault(values["az_credit_min_remaining"], 0),
+			DaysBeforeExpire:     intValueOrDefault(values["az_credit_days_before_expire"], 0),
+			MaxMonthlyCost:       floatValueOrDefault(values["az_credit_max_monthly_cost"], 0),
+			TriggerAction:        valueOrDefault(values["az_credit_trigger_action"], "alert"),
+			ConfirmAutoDeleteAll: boolValue(values["az_credit_confirm_delete_all"]),
+		}
+		creditCfg.Normalize()
 		account := AzureConfig{
 			Name:          name,
 			Group:         valueOrDefault(values["group"], "azure"),
@@ -396,6 +442,7 @@ func parseBlockConfig(content string) (*Config, error) {
 			TenantId:      valueOrDefault(values["tenant_id"], values["tenant"]),
 			ResourceGroup: values["resource_group"],
 			Location:      values["location"],
+			CreditMonitor: creditCfg,
 		}
 		cfg.AzureAccounts = append(cfg.AzureAccounts, account)
 	}
