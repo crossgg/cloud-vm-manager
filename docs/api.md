@@ -139,6 +139,12 @@
 | GET | `/api/oci/:account/os/buckets/:bucket/download` | 下载 Bucket 中的对象 |
 | DELETE | `/api/oci/:account/os/buckets/:bucket/objects` | 删除对象 |
 | POST | `/api/oci/:account/os/buckets/:bucket/par` | 创建对象预认证访问链接 (PAR) |
+| GET | `/api/vm/:provider/:account/:name/boot-volume` | 获取指定 OCI 实例的启动盘及同可用域可附加启动盘 |
+| GET | `/api/oci/:account/boot-volumes` | 列出 OCI 账号全部启动盘及实例挂载信息 |
+| PUT | `/api/oci/:account/boot-volumes/:bootVolumeID` | 调整启动盘大小 (`sizeInGBs`) 或性能单元 (`vpusPerGB`) |
+| DELETE | `/api/oci/:account/boot-volumes/:bootVolumeID` | 删除已卸载的启动盘 |
+| POST | `/api/oci/:account/boot-volumes/:bootVolumeID/attach` | 将未挂载的启动盘附加到指定实例 |
+| POST | `/api/oci/:account/boot-volume-attachments/:attachmentID/detach` | 从已停止实例卸载启动盘 |
 
 ## 8. 账号级防火墙管理（OCI / GCP / Azure）
 

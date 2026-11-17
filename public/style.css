@@ -4064,3 +4064,66 @@ button {
   background: rgba(239, 68, 68, 0.08);
   margin-bottom: 10px;
 }
+
+/* OCI Boot Volume Management */
+.oci-bv-modal-panel {
+  width: min(600px, 95vw);
+}
+
+.oci-bv-card {
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius-md);
+  background: var(--panel-soft);
+  padding: 16px 18px;
+}
+
+.oci-bv-kv {
+  display: grid;
+  grid-template-columns: 88px 1fr;
+  gap: 10px 14px;
+  align-items: center;
+  font-size: 13.5px;
+  margin-bottom: 16px;
+}
+
+.oci-bv-kv-label {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.oci-bv-kv-val {
+  color: var(--text);
+  font-weight: 500;
+  word-break: break-all;
+}
+
+.oci-bv-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.oci-bv-actions .primary-btn {
+  width: auto;
+  min-width: 110px;
+}
+
+.oci-bv-warning {
+  margin-top: 14px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+  color: #fbbf24;
+  font-size: 13px;
+  line-height: 1.5;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+body.light-theme .oci-bv-warning {
+  color: #92400e;
+  background: rgba(245, 158, 11, 0.14);
+}

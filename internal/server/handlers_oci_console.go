@@ -483,3 +483,98 @@ func createOCIPAR(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true, "par": par})
 }
+
+func getOCIInstanceBootVolume(c *gin.Context) {
+	if strings.ToLower(c.Param("provider")) != "oci" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "only OCI accounts support boot volume management"})
+		return
+	}
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	res, err := ociSvc.GetInstanceBootVolume(c.Param("name"))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func listOCIAccountBootVolumes(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	res, err := ociSvc.ListAccountBootVolumes()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func updateOCIBootVolume(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	var payload struct {
+		SizeInGBs *int64 `json:"sizeInGBs"`
+		VpusPerGB *int64 `json:"vpusPerGB"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	updated, err := ociSvc.UpdateBootVolume(c.Param("bootVolumeID"), payload.SizeInGBs, payload.VpusPerGB)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "bootVolume": updated})
+}
+
+func detachOCIBootVolume(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	if err := ociSvc.DetachBootVolume(c.Param("attachmentID")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}
+
+func attachOCIBootVolume(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	var payload struct {
+		InstanceID string `json:"instanceId"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	att, err := ociSvc.AttachBootVolume(c.Param("bootVolumeID"), payload.InstanceID)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true, "attachment": att})
+}
+
+func deleteOCIBootVolume(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	if err := ociSvc.DeleteBootVolume(c.Param("bootVolumeID")); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"success": true})
+}

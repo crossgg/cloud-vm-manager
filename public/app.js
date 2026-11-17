@@ -822,6 +822,7 @@ function renderVMCard(vm) {
         ${dnsEnabled ? '<button class="action-btn dns" type="button" data-action="update-dns">更新 DNS</button>' : ''}
         <button class="action-btn dns-bind" type="button" data-action="dns-bind">DNS 绑定</button>
         ${isOCI ? '<button class="action-btn edit" type="button" data-action="edit">编辑</button>' : ''}
+        ${isOCI ? '<button class="action-btn boot-volume" type="button" data-action="boot-volume">启动盘</button>' : ''}
         ${isOCI ? '<button class="action-btn security-list" type="button" data-action="security-list">安全规则</button>' : ''}
         <button class="action-btn firewall" type="button" data-action="firewall">防火墙</button>
         ${isOCI ? '<button class="action-btn oci-ip-btn-danger" type="button" data-action="terminate">删除实例</button>' : ''}
@@ -863,6 +864,10 @@ async function handleVMAction(button) {
   }
   if (action === 'ip-manage') {
     openOCIIPModal(vm);
+    return;
+  }
+  if (action === 'boot-volume') {
+    openOCIBootVolumeModalForVM(vm);
     return;
   }
   if (action === 'terminate') {
@@ -5997,6 +6002,7 @@ function switchOCITab(tab) {
 
   const paneMap = {
     overview: 'oci-tab-overview',
+    'boot-volumes': 'oci-tab-boot-volumes',
     monitoring: 'oci-tab-monitoring',
     users: 'oci-tab-users',
     create: 'oci-tab-create',
@@ -6022,6 +6028,8 @@ function switchOCITab(tab) {
 
   if (currentOCITab === 'overview') {
     loadOCIOverview();
+  } else if (currentOCITab === 'boot-volumes') {
+    loadOCIBootVolumesTab();
   } else if (currentOCITab === 'monitoring') {
     const lbl = document.getElementById('dt-monitor-account-label');
     if (lbl) lbl.textContent = selectedAccount.account;
@@ -7380,6 +7388,29 @@ document.addEventListener('DOMContentLoaded', () => {
   // Overview
   document.getElementById('oci-overview-refresh-btn')?.addEventListener('click', loadOCIOverview);
 
+  // Boot Volume Tab & Modals
+  document.getElementById('oci-bv-refresh-btn')?.addEventListener('click', loadOCIBootVolumesTab);
+  document.getElementById('oci-bv-list-wrap')?.addEventListener('click', handleOCIBootVolumeTabAction);
+  document.getElementById('oci-bv-modal-close')?.addEventListener('click', closeOCIBootVolumeModal);
+  document.getElementById('oci-bv-modal-done')?.addEventListener('click', closeOCIBootVolumeModal);
+  document.getElementById('oci-boot-volume-modal')?.addEventListener('click', e => {
+    if (e.target.id === 'oci-boot-volume-modal') closeOCIBootVolumeModal();
+  });
+  document.getElementById('oci-bv-modal-body')?.addEventListener('click', handleOCIBVModalBodyClick);
+  document.getElementById('oci-bv-subform')?.addEventListener('click', handleOCIBVSubformClick);
+
+  document.getElementById('oci-bv-delete-close')?.addEventListener('click', closeOCIBVDeleteModal);
+  document.getElementById('oci-bv-delete-cancel')?.addEventListener('click', closeOCIBVDeleteModal);
+  document.getElementById('oci-bv-delete-modal')?.addEventListener('click', e => {
+    if (e.target.id === 'oci-bv-delete-modal') closeOCIBVDeleteModal();
+  });
+  document.getElementById('oci-bv-delete-confirm-input')?.addEventListener('input', e => {
+    const expected = ociBVDeleteTarget?.displayName || '';
+    const confirmBtn = document.getElementById('oci-bv-delete-confirm');
+    if (confirmBtn) confirmBtn.disabled = !expected || e.target.value.trim() !== expected;
+  });
+  document.getElementById('oci-bv-delete-confirm')?.addEventListener('click', confirmOCIBVDelete);
+
   // Terminate Modal
   document.getElementById('oci-terminate-close')?.addEventListener('click', closeOCITerminateModal);
   document.getElementById('oci-terminate-cancel')?.addEventListener('click', closeOCITerminateModal);
@@ -8436,4 +8467,627 @@ function initAzureWorkspaceListeners() {
   document.getElementById('azure-cleanup-modal-close')?.addEventListener('click', closeAzureCleanupModal);
   document.getElementById('azure-cleanup-modal-cancel')?.addEventListener('click', closeAzureCleanupModal);
   document.getElementById('azure-cleanup-modal-confirm')?.addEventListener('click', confirmAzureCleanup);
+}
+
+// ==================== OCI Boot Volume Management ====================
+
+let ociAccountBootVolumesData = { bootVolumes: [], instances: [] };
+let ociBVModalContext = null; // { mode: 'vm' | 'account', account, vm?, bootVolumeId?, data? }
+let ociBVSubformMode = '';
+let ociBVDeleteTarget = null; // { id, displayName, account }
+
+function setOCIBVTabMessage(text, isError = false, isSuccess = false) {
+  const el = document.getElementById('oci-bv-tab-message');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'form-message' + (isError ? ' error' : isSuccess ? ' success' : '');
+}
+
+function setOCIBVModalMessage(text, isError = false, isSuccess = false) {
+  const el = document.getElementById('oci-bv-modal-message');
+  if (!el) return;
+  el.textContent = text || '';
+  el.className = 'form-message' + (isError ? ' error' : isSuccess ? ' success' : '');
+}
+
+async function loadOCIBootVolumesTab() {
+  if (!selectedAccount || selectedAccount.provider !== 'oci') return;
+  const account = selectedAccount.account;
+  const lbl = document.getElementById('oci-bv-account-label');
+  if (lbl) lbl.textContent = account;
+  const wrap = document.getElementById('oci-bv-list-wrap');
+  if (wrap) wrap.innerHTML = '<div class="empty-state compact">正在加载账号启动盘...</div>';
+  setOCIBVTabMessage('');
+
+  try {
+    const data = await fetchJSON(`/api/oci/${encodeURIComponent(account)}/boot-volumes`);
+    ociAccountBootVolumesData = {
+      bootVolumes: Array.isArray(data?.bootVolumes) ? data.bootVolumes : [],
+      instances: Array.isArray(data?.instances) ? data.instances : []
+    };
+    renderOCIBootVolumesTab();
+    addLog(`已加载 OCI 账号 ${account} 的启动盘，共 ${ociAccountBootVolumesData.bootVolumes.length} 个。`, 'info');
+  } catch (err) {
+    if (wrap) wrap.innerHTML = `<div class="empty-state compact error">加载启动盘失败：${escapeHtml(err.message)}</div>`;
+    addLog(`加载 OCI 启动盘失败：${err.message}`, 'error');
+  }
+}
+
+function renderOCIBootVolumesTab() {
+  const wrap = document.getElementById('oci-bv-list-wrap');
+  if (!wrap) return;
+  const list = ociAccountBootVolumesData.bootVolumes || [];
+  if (list.length === 0) {
+    wrap.innerHTML = '<div class="empty-state compact">当前 OCI 账号下暂无启动盘。</div>';
+    return;
+  }
+
+  wrap.innerHTML = `
+    <table class="gcp-fw-table">
+      <thead>
+        <tr>
+          <th>启动盘名称</th>
+          <th>容量 / VPU</th>
+          <th>卷状态</th>
+          <th>附加状态 / 实例</th>
+          <th>可用域</th>
+          <th style="text-align: right;">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${list.map(bv => {
+          const canDetach = bv.attached && String(bv.instanceState || '').toUpperCase() === 'STOPPED';
+          const stateBadgeCls = bv.lifecycleState === 'AVAILABLE' ? 'attached' : 'ephemeral';
+          return `
+            <tr data-bv-id="${escapeAttr(bv.id)}">
+              <td>
+                <strong style="color: var(--text);">${escapeHtml(bv.displayName)}</strong>
+                <div><code style="font-size: 11px; color: var(--muted);">${escapeHtml((bv.id || '').slice(0, 34))}...</code></div>
+              </td>
+              <td>
+                <div><strong>${escapeHtml(String(bv.sizeInGBs))} GB</strong></div>
+                <div style="font-size: 12px; color: var(--muted);">VPU: ${escapeHtml(String(bv.vpusPerGB || 10))}</div>
+              </td>
+              <td><span class="oci-ip-badge ${stateBadgeCls}">${escapeHtml(bv.lifecycleState || '-')}</span></td>
+              <td>
+                ${bv.attached
+                  ? `<div><span class="oci-ip-badge attached">已附加</span></div>
+                     <div style="font-size: 12px; color: var(--muted); margin-top: 3px;">${escapeHtml(bv.instanceName || bv.instanceId || '')} (${escapeHtml(bv.instanceState || '-')})</div>`
+                  : '<span class="oci-ip-badge ephemeral">未附加</span>'}
+              </td>
+              <td style="font-size: 12px; color: var(--muted);">${escapeHtml(bv.availabilityDomain || '-')}</td>
+              <td style="text-align: right;">
+                <div class="fw-actions-cell" style="justify-content: flex-end; flex-wrap: wrap;">
+                  <button class="secondary-btn oci-ip-btn-sm oci-bv-tab-manage-btn" type="button" data-bv-id="${escapeAttr(bv.id)}">管理</button>
+                  ${bv.attached
+                    ? `<button class="ghost-btn oci-ip-btn-sm oci-bv-tab-detach-btn" type="button" data-bv-id="${escapeAttr(bv.id)}" ${canDetach ? '' : 'disabled title="需先停止实例后才可卸载"'}>卸载</button>`
+                    : `<button class="secondary-btn oci-ip-btn-sm oci-bv-tab-attach-btn" type="button" data-bv-id="${escapeAttr(bv.id)}">附加到实例</button>`}
+                  <button class="ghost-btn oci-ip-btn-sm oci-ip-btn-danger oci-bv-tab-delete-btn" type="button" data-bv-id="${escapeAttr(bv.id)}" ${bv.attached ? 'disabled title="需先卸载后才可删除"' : ''}>删除</button>
+                </div>
+              </td>
+            </tr>
+          `;
+        }).join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+async function handleOCIBootVolumeTabAction(event) {
+  if (!selectedAccount || selectedAccount.provider !== 'oci') return;
+  const account = selectedAccount.account;
+
+  const manageBtn = event.target.closest('.oci-bv-tab-manage-btn');
+  if (manageBtn) {
+    openOCIBootVolumeModalForAccount(account, manageBtn.dataset.bvId);
+    return;
+  }
+
+  const attachBtn = event.target.closest('.oci-bv-tab-attach-btn');
+  if (attachBtn) {
+    await openOCIBootVolumeModalForAccount(account, attachBtn.dataset.bvId, 'attach');
+    return;
+  }
+
+  const detachBtn = event.target.closest('.oci-bv-tab-detach-btn');
+  if (detachBtn) {
+    const bv = (ociAccountBootVolumesData.bootVolumes || []).find(item => item.id === detachBtn.dataset.bvId);
+    if (!bv || !bv.attachmentId) return;
+    if (!confirm(`确认从已停止实例「${bv.instanceName || bv.instanceId}」卸载启动盘「${bv.displayName}」？`)) return;
+    detachBtn.disabled = true;
+    setOCIBVTabMessage('正在卸载启动盘...');
+    try {
+      await fetchJSON(`/api/oci/${encodeURIComponent(account)}/boot-volume-attachments/${encodeURIComponent(bv.attachmentId)}/detach`, { method: 'POST' });
+      setOCIBVTabMessage('启动盘已卸载。', false, true);
+      addLog(`已卸载 OCI 启动盘：${bv.displayName}`, 'success');
+      await loadOCIBootVolumesTab();
+      fetchVMs();
+    } catch (err) {
+      setOCIBVTabMessage(err.message, true);
+      addLog(`卸载 OCI 启动盘失败：${err.message}`, 'error');
+      detachBtn.disabled = false;
+    }
+    return;
+  }
+
+  const delBtn = event.target.closest('.oci-bv-tab-delete-btn');
+  if (delBtn) {
+    const bv = (ociAccountBootVolumesData.bootVolumes || []).find(item => item.id === delBtn.dataset.bvId);
+    if (bv) openOCIBVDeleteModal(bv, account);
+  }
+}
+
+function openOCIBootVolumeModalForVM(vm) {
+  ociBVModalContext = { mode: 'vm', account: vm.accountId, vm, bootVolumeId: '', data: null };
+  ociBVSubformMode = '';
+  document.getElementById('oci-bv-modal-title').textContent = `${vm.name || vm.id} - 启动盘管理`;
+  document.getElementById('oci-bv-modal-body').innerHTML = '<div class="empty-state compact">加载中...</div>';
+  closeOCIBVSubform();
+  setOCIBVModalMessage('');
+  document.getElementById('oci-boot-volume-modal').hidden = false;
+  loadOCIBootVolumeModal();
+}
+
+async function openOCIBootVolumeModalForAccount(account, bvId, initialSubform = '') {
+  ociBVModalContext = { mode: 'account', account, vm: null, bootVolumeId: bvId, data: null };
+  ociBVSubformMode = '';
+  const bv = (ociAccountBootVolumesData.bootVolumes || []).find(item => item.id === bvId);
+  document.getElementById('oci-bv-modal-title').textContent = `${bv?.displayName || bvId} - 启动盘管理`;
+  document.getElementById('oci-bv-modal-body').innerHTML = '<div class="empty-state compact">加载中...</div>';
+  closeOCIBVSubform();
+  setOCIBVModalMessage('');
+  document.getElementById('oci-boot-volume-modal').hidden = false;
+  await loadOCIBootVolumeModal();
+  if (initialSubform) {
+    openOCIBVSubform(initialSubform);
+  }
+}
+
+function closeOCIBootVolumeModal() {
+  const modal = document.getElementById('oci-boot-volume-modal');
+  if (modal) modal.hidden = true;
+  closeOCIBVSubform();
+  ociBVModalContext = null;
+}
+
+function closeOCIBVSubform() {
+  const sf = document.getElementById('oci-bv-subform');
+  if (sf) {
+    sf.hidden = true;
+    sf.innerHTML = '';
+  }
+  ociBVSubformMode = '';
+}
+
+async function loadOCIBootVolumeModal() {
+  if (!ociBVModalContext) return;
+  const ctx = ociBVModalContext;
+  const body = document.getElementById('oci-bv-modal-body');
+
+  try {
+    if (ctx.mode === 'vm' && ctx.vm) {
+      const res = await fetchJSON(`/api/vm/${encodeURIComponent(ctx.vm.provider)}/${encodeURIComponent(ctx.vm.accountId)}/${encodeURIComponent(ctx.vm.id)}/boot-volume`);
+      if (!ociBVModalContext) return;
+      ctx.data = res;
+      if (res.bootVolume?.id) ctx.bootVolumeId = res.bootVolume.id;
+      renderOCIBootVolumeModal();
+    } else {
+      const res = await fetchJSON(`/api/oci/${encodeURIComponent(ctx.account)}/boot-volumes`);
+      if (!ociBVModalContext) return;
+      ociAccountBootVolumesData = {
+        bootVolumes: Array.isArray(res?.bootVolumes) ? res.bootVolumes : [],
+        instances: Array.isArray(res?.instances) ? res.instances : []
+      };
+      const bv = ociAccountBootVolumesData.bootVolumes.find(item => item.id === ctx.bootVolumeId) || null;
+      ctx.data = {
+        bootVolume: bv,
+        instances: ociAccountBootVolumesData.instances.filter(inst => !bv || !bv.availabilityDomain || inst.availabilityDomain === bv.availabilityDomain)
+      };
+      renderOCIBootVolumeModal();
+    }
+  } catch (err) {
+    if (body) {
+      body.innerHTML = `<div class="empty-state compact error">加载启动盘信息失败：${escapeHtml(err.message)}</div>`;
+    }
+  }
+}
+
+function renderOCIBootVolumeModal() {
+  const body = document.getElementById('oci-bv-modal-body');
+  if (!body || !ociBVModalContext?.data) return;
+  const ctx = ociBVModalContext;
+  const data = ctx.data;
+  const bv = data.bootVolume;
+
+  if (!bv) {
+    // Instance currently has no boot volume attached (e.g., just detached!)
+    const attachable = Array.isArray(data.attachableVolumes) ? data.attachableVolumes : [];
+    const canAttachToThisVM = ctx.mode === 'vm' && String(data.instanceState || '').toUpperCase() === 'STOPPED';
+    body.innerHTML = `
+      <div class="oci-bv-card">
+        <div class="oci-bv-kv">
+          <span class="oci-bv-kv-label">实例名称</span>
+          <span class="oci-bv-kv-val">${escapeHtml(data.instanceName || data.instanceId || '-')}</span>
+          <span class="oci-bv-kv-label">实例状态</span>
+          <span class="oci-bv-kv-val"><span class="oci-ip-badge ephemeral">${escapeHtml(data.instanceState || '-')}</span></span>
+          <span class="oci-bv-kv-label">附加状态</span>
+          <span class="oci-bv-kv-val"><span class="oci-ip-badge ephemeral">未附加任何启动盘</span></span>
+        </div>
+        ${ctx.mode === 'vm' ? `
+          <div class="oci-bv-actions">
+            <button id="oci-bv-btn-attach-existing" class="primary-btn" type="button" ${canAttachToThisVM && attachable.length > 0 ? '' : 'disabled'}>附加已有启动盘</button>
+          </div>
+          ${!canAttachToThisVM ? '<div class="oci-bv-warning"><i class="bi bi-exclamation-triangle-fill"></i><span>附加启动盘前，实例必须处于“已停止”状态。</span></div>' : (attachable.length === 0 ? '<div class="field-hint" style="margin-top:10px;">当前可用域下没有可附加的未挂载启动盘。</div>' : '')}
+        ` : '<div class="empty-state compact">未找到该启动盘（可能已被删除）。</div>'}
+      </div>
+    `;
+    return;
+  }
+
+  const instState = String(bv.instanceState || data.instanceState || '').toUpperCase();
+  const isAttached = Boolean(bv.attached);
+  const canDetach = isAttached && instState === 'STOPPED';
+  const stateBadgeCls = bv.lifecycleState === 'AVAILABLE' ? 'attached' : 'ephemeral';
+
+  body.innerHTML = `
+    <div class="oci-bv-card">
+      <div class="oci-bv-kv">
+        <span class="oci-bv-kv-label">名称</span>
+        <span class="oci-bv-kv-val">${escapeHtml(bv.displayName || bv.id)}</span>
+        <span class="oci-bv-kv-label">大小</span>
+        <span class="oci-bv-kv-val">${escapeHtml(String(bv.sizeInGBs))} GB</span>
+        <span class="oci-bv-kv-label">VPU</span>
+        <span class="oci-bv-kv-val">${escapeHtml(String(bv.vpusPerGB || 10))}</span>
+        <span class="oci-bv-kv-label">卷状态</span>
+        <span class="oci-bv-kv-val"><span class="oci-ip-badge ${stateBadgeCls}">${escapeHtml(bv.lifecycleState || '-')}</span></span>
+        <span class="oci-bv-kv-label">附加状态</span>
+        <span class="oci-bv-kv-val">
+          ${isAttached
+            ? `<span class="oci-ip-badge attached">已附加</span> <span style="font-size:12.5px; color: var(--muted); margin-left:6px;">${escapeHtml(bv.instanceName || bv.instanceId || '')}</span>`
+            : '<span class="oci-ip-badge ephemeral">未附加</span>'}
+        </span>
+      </div>
+      <div class="oci-bv-actions">
+        <button id="oci-bv-btn-resize" class="primary-btn" type="button">调大小</button>
+        <button id="oci-bv-btn-vpu" class="secondary-btn" type="button">VPU</button>
+        ${isAttached
+          ? `<button id="oci-bv-btn-detach" class="secondary-btn" type="button" ${canDetach ? '' : 'disabled'}>卸载</button>`
+          : `<button id="oci-bv-btn-attach" class="secondary-btn" type="button">附加到实例</button>`}
+        <button id="oci-bv-btn-delete" class="ghost-btn oci-ip-btn-danger" type="button" ${isAttached ? 'disabled title="需先停止实例并卸载后才能删除"' : ''}>删除</button>
+      </div>
+      ${isAttached && !canDetach ? `
+        <div class="oci-bv-warning">
+          <i class="bi bi-exclamation-triangle-fill"></i>
+          <span>卸载启动盘前，实例必须处于“已停止”状态。请先停止实例并等待状态更新。</span>
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function handleOCIBVModalBodyClick(event) {
+  if (!ociBVModalContext?.data) return;
+  const ctx = ociBVModalContext;
+  const bv = ctx.data.bootVolume;
+
+  if (event.target.closest('#oci-bv-btn-resize')) {
+    openOCIBVSubform('resize');
+    return;
+  }
+  if (event.target.closest('#oci-bv-btn-vpu')) {
+    openOCIBVSubform('vpu');
+    return;
+  }
+  if (event.target.closest('#oci-bv-btn-attach')) {
+    openOCIBVSubform('attach');
+    return;
+  }
+  if (event.target.closest('#oci-bv-btn-attach-existing')) {
+    openOCIBVSubform('attach-existing');
+    return;
+  }
+  if (event.target.closest('#oci-bv-btn-detach') && bv && bv.attachmentId) {
+    submitOCIBVDetach(bv);
+    return;
+  }
+  if (event.target.closest('#oci-bv-btn-delete') && bv && !bv.attached) {
+    openOCIBVDeleteModal(bv, ctx.account);
+  }
+}
+
+function openOCIBVSubform(mode) {
+  const sf = document.getElementById('oci-bv-subform');
+  if (!sf || !ociBVModalContext?.data) return;
+  if (ociBVSubformMode === mode && !sf.hidden) {
+    closeOCIBVSubform();
+    return;
+  }
+  ociBVSubformMode = mode;
+  const data = ociBVModalContext.data;
+  const bv = data.bootVolume;
+
+  if (mode === 'resize' && bv) {
+    const suggested = (Number(bv.sizeInGBs) || 50) + 10;
+    sf.innerHTML = `
+      <div class="oci-ip-subform-title">
+        <span>调整启动盘大小（当前 ${escapeHtml(String(bv.sizeInGBs))} GB，仅支持扩容）</span>
+        <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-bv-subform-close">取消</button>
+      </div>
+      <label class="field compact">
+        <span>新大小 (GB)</span>
+        <input id="oci-bv-new-size" type="number" min="${escapeAttr(String((Number(bv.sizeInGBs) || 50) + 1))}" value="${escapeAttr(String(suggested))}">
+        <small class="field-hint">OCI 启动盘只允许调大不允许缩小；扩容后可能需要在系统内扩展分区或重启生效。</small>
+      </label>
+      <div class="oci-ip-subform-actions">
+        <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-bv-resize-submit">确认扩容</button>
+      </div>
+    `;
+    sf.hidden = false;
+    return;
+  }
+
+  if (mode === 'vpu' && bv) {
+    const curVPU = Number(bv.vpusPerGB) || 10;
+    const vpuChoices = [
+      { v: 10, label: '10 - 均衡性能 (Always Free 默认)' },
+      { v: 20, label: '20 - 较高性能 (Higher Performance)' },
+      { v: 30, label: '30 - 超高性能 (UHP 30)' },
+      { v: 40, label: '40 - 超高性能 (UHP 40)' },
+      { v: 50, label: '50 - 超高性能 (UHP 50)' },
+      { v: 60, label: '60 - 超高性能 (UHP 60)' },
+      { v: 80, label: '80 - 超高性能 (UHP 80)' },
+      { v: 100, label: '100 - 超高性能 (UHP 100)' },
+      { v: 120, label: '120 - 超高性能 (UHP 120)' }
+    ];
+    sf.innerHTML = `
+      <div class="oci-ip-subform-title">
+        <span>修改性能单元 (VPU/GB，当前 ${escapeHtml(String(curVPU))})</span>
+        <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-bv-subform-close">取消</button>
+      </div>
+      <label class="field compact">
+        <span>目标 VPU</span>
+        <select id="oci-bv-new-vpu">
+          ${vpuChoices.map(opt => `<option value="${opt.v}" ${curVPU === opt.v ? 'selected' : ''}>${escapeHtml(opt.label)}</option>`).join('')}
+        </select>
+        <small class="field-hint">注意：免费账户默认配额为 10 VPU，调高 VPU 可能产生额外性能费用。</small>
+      </label>
+      <div class="oci-ip-subform-actions">
+        <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-bv-vpu-submit">确认保存 VPU</button>
+      </div>
+    `;
+    sf.hidden = false;
+    return;
+  }
+
+  if (mode === 'attach' && bv) {
+    const instances = (data.instances || []).filter(i => !bv.availabilityDomain || i.availabilityDomain === bv.availabilityDomain);
+    const eligible = instances.filter(i => i.canAttach);
+    sf.innerHTML = `
+      <div class="oci-ip-subform-title">
+        <span>附加启动盘到实例（可用域：${escapeHtml(bv.availabilityDomain || '-')}）</span>
+        <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-bv-subform-close">取消</button>
+      </div>
+      <label class="field compact">
+        <span>选择目标实例（需处于已停止状态且未挂载启动盘）</span>
+        <select id="oci-bv-attach-instance">
+          ${instances.length > 0
+            ? instances.map(i => `<option value="${escapeAttr(i.id)}" ${i.canAttach ? '' : 'disabled'}>${escapeHtml(i.displayName)} (${escapeHtml(i.lifecycleState)}${i.hasBootVolume ? ' · 已有启动盘' : ''})</option>`).join('')
+            : '<option value="">当前可用域暂无实例</option>'}
+        </select>
+        ${eligible.length === 0 ? '<small class="field-hint">当前可用域没有“已停止且未挂载启动盘”的可选实例。</small>' : ''}
+      </label>
+      <div class="oci-ip-subform-actions">
+        <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-bv-attach-submit" ${eligible.length === 0 ? 'disabled' : ''}>确认附加到实例</button>
+      </div>
+    `;
+    sf.hidden = false;
+    return;
+  }
+
+  if (mode === 'attach-existing') {
+    const vols = Array.isArray(data.attachableVolumes) ? data.attachableVolumes : [];
+    sf.innerHTML = `
+      <div class="oci-ip-subform-title">
+        <span>为实例附加未挂载的启动盘</span>
+        <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-bv-subform-close">取消</button>
+      </div>
+      <label class="field compact">
+        <span>选择同可用域启动盘</span>
+        <select id="oci-bv-attach-existing-vol">
+          ${vols.map(v => `<option value="${escapeAttr(v.id)}">${escapeHtml(v.displayName)} (${v.sizeInGBs} GB, VPU ${v.vpusPerGB || 10})</option>`).join('')}
+        </select>
+      </label>
+      <div class="oci-ip-subform-actions">
+        <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-bv-attach-existing-submit">确认附加</button>
+      </div>
+    `;
+    sf.hidden = false;
+  }
+}
+
+async function handleOCIBVSubformClick(event) {
+  if (!ociBVModalContext?.data) return;
+  const ctx = ociBVModalContext;
+  const bv = ctx.data.bootVolume;
+
+  if (event.target.id === 'oci-bv-subform-close') {
+    closeOCIBVSubform();
+    return;
+  }
+
+  if (event.target.id === 'oci-bv-resize-submit' && bv) {
+    const newSize = Number(document.getElementById('oci-bv-new-size')?.value || 0);
+    if (!Number.isInteger(newSize) || newSize <= Number(bv.sizeInGBs || 0)) {
+      setOCIBVModalMessage(`新大小必须大于当前大小 (${bv.sizeInGBs} GB)。`, true);
+      return;
+    }
+    event.target.disabled = true;
+    setOCIBVModalMessage('正在提交扩容请求...');
+    try {
+      await fetchJSON(`/api/oci/${encodeURIComponent(ctx.account)}/boot-volumes/${encodeURIComponent(bv.id)}`, {
+        method: 'PUT',
+        body: { sizeInGBs: newSize }
+      });
+      setOCIBVModalMessage(`启动盘已扩容至 ${newSize} GB。`, false, true);
+      addLog(`OCI 启动盘 ${bv.displayName} 已扩容至 ${newSize} GB`, 'success');
+      closeOCIBVSubform();
+      await loadOCIBootVolumeModal();
+      if (currentOCITab === 'boot-volumes') loadOCIBootVolumesTab();
+    } catch (err) {
+      setOCIBVModalMessage(err.message, true);
+      event.target.disabled = false;
+    }
+    return;
+  }
+
+  if (event.target.id === 'oci-bv-vpu-submit' && bv) {
+    const newVPU = Number(document.getElementById('oci-bv-new-vpu')?.value || 10);
+    event.target.disabled = true;
+    setOCIBVModalMessage('正在更新 VPU 配置...');
+    try {
+      await fetchJSON(`/api/oci/${encodeURIComponent(ctx.account)}/boot-volumes/${encodeURIComponent(bv.id)}`, {
+        method: 'PUT',
+        body: { vpusPerGB: newVPU }
+      });
+      setOCIBVModalMessage(`VPU 已调整为 ${newVPU}。`, false, true);
+      addLog(`OCI 启动盘 ${bv.displayName} VPU 已更新为 ${newVPU}`, 'success');
+      closeOCIBVSubform();
+      await loadOCIBootVolumeModal();
+      if (currentOCITab === 'boot-volumes') loadOCIBootVolumesTab();
+    } catch (err) {
+      setOCIBVModalMessage(err.message, true);
+      event.target.disabled = false;
+    }
+    return;
+  }
+
+  if (event.target.id === 'oci-bv-attach-submit' && bv) {
+    const instId = document.getElementById('oci-bv-attach-instance')?.value || '';
+    if (!instId) {
+      setOCIBVModalMessage('请选择可附加的目标实例。', true);
+      return;
+    }
+    event.target.disabled = true;
+    setOCIBVModalMessage('正在附加启动盘到实例...');
+    try {
+      await fetchJSON(`/api/oci/${encodeURIComponent(ctx.account)}/boot-volumes/${encodeURIComponent(bv.id)}/attach`, {
+        method: 'POST',
+        body: { instanceId: instId }
+      });
+      setOCIBVModalMessage('启动盘已附加到实例。', false, true);
+      addLog(`OCI 启动盘 ${bv.displayName} 已附加到实例`, 'success');
+      closeOCIBVSubform();
+      await loadOCIBootVolumeModal();
+      if (currentOCITab === 'boot-volumes') loadOCIBootVolumesTab();
+      fetchVMs();
+    } catch (err) {
+      setOCIBVModalMessage(err.message, true);
+      event.target.disabled = false;
+    }
+    return;
+  }
+
+  if (event.target.id === 'oci-bv-attach-existing-submit' && ctx.vm) {
+    const volId = document.getElementById('oci-bv-attach-existing-vol')?.value || '';
+    if (!volId) return;
+    event.target.disabled = true;
+    setOCIBVModalMessage('正在附加启动盘...');
+    try {
+      await fetchJSON(`/api/oci/${encodeURIComponent(ctx.account)}/boot-volumes/${encodeURIComponent(volId)}/attach`, {
+        method: 'POST',
+        body: { instanceId: ctx.vm.id }
+      });
+      ctx.bootVolumeId = volId;
+      setOCIBVModalMessage('启动盘已附加到当前实例。', false, true);
+      addLog(`已为实例 ${ctx.vm.name} 附加启动盘`, 'success');
+      closeOCIBVSubform();
+      await loadOCIBootVolumeModal();
+      if (currentOCITab === 'boot-volumes') loadOCIBootVolumesTab();
+    } catch (err) {
+      setOCIBVModalMessage(err.message, true);
+      event.target.disabled = false;
+    }
+  }
+}
+
+async function submitOCIBVDetach(bv) {
+  if (!ociBVModalContext || !bv?.attachmentId) return;
+  if (!confirm(`确认从已停止实例「${bv.instanceName || bv.instanceId}」卸载启动盘「${bv.displayName}」？`)) return;
+  const btn = document.getElementById('oci-bv-btn-detach');
+  if (btn) btn.disabled = true;
+  setOCIBVModalMessage('正在卸载启动盘，请稍候...');
+  try {
+    await fetchJSON(`/api/oci/${encodeURIComponent(ociBVModalContext.account)}/boot-volume-attachments/${encodeURIComponent(bv.attachmentId)}/detach`, {
+      method: 'POST'
+    });
+    setOCIBVModalMessage('启动盘已卸载，现在可以安全删除或附加到其他同可用域实例。', false, true);
+    addLog(`已卸载 OCI 启动盘：${bv.displayName}`, 'success');
+    await loadOCIBootVolumeModal();
+    if (currentOCITab === 'boot-volumes') loadOCIBootVolumesTab();
+    fetchVMs();
+  } catch (err) {
+    setOCIBVModalMessage(err.message, true);
+    if (btn) btn.disabled = false;
+  }
+}
+
+function openOCIBVDeleteModal(bv, account) {
+  const modal = document.getElementById('oci-bv-delete-modal');
+  if (!modal || !bv) return;
+  const name = bv.displayName || bv.id || '';
+  ociBVDeleteTarget = { id: bv.id, displayName: name, account };
+  document.getElementById('oci-bv-delete-target-name').textContent = name;
+  document.getElementById('oci-bv-delete-expected-name').textContent = name;
+  const input = document.getElementById('oci-bv-delete-confirm-input');
+  if (input) input.value = '';
+  const confirmBtn = document.getElementById('oci-bv-delete-confirm');
+  if (confirmBtn) confirmBtn.disabled = true;
+  const msgEl = document.getElementById('oci-bv-delete-message');
+  if (msgEl) {
+    msgEl.textContent = '';
+    msgEl.className = 'form-message';
+  }
+  modal.hidden = false;
+}
+
+function closeOCIBVDeleteModal() {
+  const modal = document.getElementById('oci-bv-delete-modal');
+  if (modal) modal.hidden = true;
+  ociBVDeleteTarget = null;
+}
+
+async function confirmOCIBVDelete() {
+  if (!ociBVDeleteTarget) return;
+  const target = ociBVDeleteTarget;
+  const inputVal = document.getElementById('oci-bv-delete-confirm-input')?.value?.trim() || '';
+  if (inputVal !== target.displayName) return;
+
+  const btn = document.getElementById('oci-bv-delete-confirm');
+  const msgEl = document.getElementById('oci-bv-delete-message');
+  if (btn) btn.disabled = true;
+  if (msgEl) {
+    msgEl.textContent = '正在删除启动盘...';
+    msgEl.className = 'form-message';
+  }
+
+  try {
+    await fetchJSON(`/api/oci/${encodeURIComponent(target.account)}/boot-volumes/${encodeURIComponent(target.id)}`, {
+      method: 'DELETE'
+    });
+    addLog(`已永久删除 OCI 启动盘：${target.displayName}`, 'success');
+    closeOCIBVDeleteModal();
+    if (ociBVModalContext && ociBVModalContext.bootVolumeId === target.id) {
+      closeOCIBootVolumeModal();
+    }
+    if (currentOCITab === 'boot-volumes') {
+      loadOCIBootVolumesTab();
+    }
+    setOCIBVTabMessage(`已删除启动盘：${target.displayName}`, false, true);
+  } catch (err) {
+    if (msgEl) {
+      msgEl.textContent = err.message;
+      msgEl.className = 'form-message error';
+    }
+    if (btn) btn.disabled = false;
+  }
 }

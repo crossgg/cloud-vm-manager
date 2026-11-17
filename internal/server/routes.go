@@ -138,6 +138,14 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 	r.DELETE("/api/oci/:account/os/buckets/:bucket/objects", deleteOCIObject)
 	r.POST("/api/oci/:account/os/buckets/:bucket/par", createOCIPAR)
 
+	// OCI Boot Volumes
+	r.GET("/api/vm/:provider/:account/:name/boot-volume", getOCIInstanceBootVolume)
+	r.GET("/api/oci/:account/boot-volumes", listOCIAccountBootVolumes)
+	r.PUT("/api/oci/:account/boot-volumes/:bootVolumeID", updateOCIBootVolume)
+	r.DELETE("/api/oci/:account/boot-volumes/:bootVolumeID", deleteOCIBootVolume)
+	r.POST("/api/oci/:account/boot-volumes/:bootVolumeID/attach", attachOCIBootVolume)
+	r.POST("/api/oci/:account/boot-volume-attachments/:attachmentID/detach", detachOCIBootVolume)
+
 	// Azure NSG (Account-level firewall)
 	r.GET("/api/azure/:account/security-groups", listAzureNSGs)
 	r.POST("/api/azure/:account/security-groups/:nsg/rules", saveAzureNSGRule)

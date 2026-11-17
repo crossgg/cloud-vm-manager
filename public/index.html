@@ -139,6 +139,7 @@
           <div id="oci-workspace-tabs" class="oci-workspace-tabs" hidden>
             <button class="oci-ws-tab" type="button" data-oci-tab="overview"><i class="bi bi-speedometer2"></i> 概述</button>
             <button class="oci-ws-tab active" type="button" data-oci-tab="instances"><i class="bi bi-cpu"></i> 实例管理</button>
+            <button class="oci-ws-tab" type="button" data-oci-tab="boot-volumes"><i class="bi bi-device-hdd"></i> 启动盘管理</button>
             <button class="oci-ws-tab" type="button" data-oci-tab="monitoring"><i class="bi bi-shield-check"></i> 云监控</button>
             <button class="oci-ws-tab" type="button" data-oci-tab="users"><i class="bi bi-people"></i> 用户管理</button>
             <button class="oci-ws-tab" type="button" data-oci-tab="create"><i class="bi bi-plus-circle"></i> 创建实例</button>
@@ -501,6 +502,23 @@
               <div id="oci-os-message" class="form-message"></div>
               <div id="oci-os-objects-wrap">
                 <div class="empty-state compact">请先选择或创建 Bucket。</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- OCI Tab: Boot Volumes Management -->
+          <div id="oci-tab-boot-volumes" class="oci-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-device-hdd"></i> 启动盘管理（含未挂载与已保留引导卷）</h3>
+                  <p>当前账号：<span id="oci-bv-account-label">-</span> · 支持调整大小（仅扩容）、VPU、从已停止实例卸载、附加到同可用域实例及安全删除。</p>
+                </div>
+                <button id="oci-bv-refresh-btn" class="secondary-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新启动盘</button>
+              </div>
+              <div id="oci-bv-tab-message" class="form-message"></div>
+              <div id="oci-bv-list-wrap">
+                <div class="empty-state compact">点击刷新读取当前 OCI 账号下的所有启动盘。</div>
               </div>
             </div>
           </div>
@@ -1637,6 +1655,48 @@
         <button id="oci-rt-save" class="primary-btn" type="button">保存路由规则</button>
       </div>
       <div id="oci-rt-message" class="form-message"></div>
+    </div>
+  </div>
+
+  <!-- OCI Boot Volume Management Modal -->
+  <div id="oci-boot-volume-modal" class="modal-overlay" hidden>
+    <div class="modal-panel oci-bv-modal-panel">
+      <div class="modal-header">
+        <h3 id="oci-bv-modal-title">OCI 启动盘管理</h3>
+        <button id="oci-bv-modal-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div id="oci-bv-modal-body" class="modal-body">
+        <div class="empty-state compact">加载中...</div>
+      </div>
+      <div id="oci-bv-subform" class="oci-ip-subform" hidden></div>
+      <div id="oci-bv-modal-message" class="form-message" style="padding: 0 20px;"></div>
+      <div class="modal-footer">
+        <button id="oci-bv-modal-done" class="secondary-btn" type="button">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- OCI Boot Volume Delete Confirmation Modal (Type Name) -->
+  <div id="oci-bv-delete-modal" class="modal-overlay" hidden>
+    <div class="modal-panel oci-terminate-modal-panel">
+      <div class="modal-header">
+        <h3>确认永久删除启动盘</h3>
+        <button id="oci-bv-delete-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="oci-terminate-warning">
+          即将永久删除启动盘：<strong id="oci-bv-delete-target-name">-</strong>（删除后不可恢复）
+        </div>
+        <label class="field">
+          <span>请输入完整的启动盘名称 <strong id="oci-bv-delete-expected-name"></strong> 以确认删除：</span>
+          <input id="oci-bv-delete-confirm-input" type="text" autocomplete="off" placeholder="输入启动盘名称">
+        </label>
+        <div id="oci-bv-delete-message" class="form-message"></div>
+      </div>
+      <div class="modal-footer">
+        <button id="oci-bv-delete-cancel" class="secondary-btn" type="button">取消</button>
+        <button id="oci-bv-delete-confirm" class="primary-btn oci-danger-submit-btn" type="button" disabled>确认删除启动盘</button>
+      </div>
     </div>
   </div>
 
