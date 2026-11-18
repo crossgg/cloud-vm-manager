@@ -10,11 +10,15 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
+
+	"github.com/crossgg/cloud-vm-manager/internal/config"
+	"github.com/crossgg/cloud-vm-manager/internal/netguard"
 )
 
 var Version = "dev"
@@ -23,6 +27,7 @@ const (
 	DefaultUpdateRepo = "crossgg/cloud-vm-manager"
 	RuntimeBinPath    = "/app/runtime/cloud-vm-manager"
 	UpdateTempDir     = "/app/runtime/update"
+	maxDownloadBytes  = 128 << 20
 )
 
 type GithubRelease struct {
@@ -50,6 +55,40 @@ type UpdateInfo struct {
 	ReleaseNotes    string `json:"releaseNotes,omitempty"`
 	DownloadProxy   string `json:"downloadProxy,omitempty"`
 	CheckError      string `json:"checkError,omitempty"`
+	Disabled        bool   `json:"disabled,omitempty"`
+}
+
+func IsSelfUpdateDisabled() bool {
+	val := strings.ToLower(strings.TrimSpace(os.Getenv("DISABLE_SELF_UPDATE")))
+	return val == "1" || val == "true" || val == "yes" || val == "on"
+}
+
+func ValidateDownloadProxyURL(raw string) (string, error) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return "", nil
+	}
+	if config.HasUnsafeConfigLineValue(trimmed) {
+		return "", fmt.Errorf("download proxy contains unsupported control characters")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("invalid download proxy URL: %w", err)
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("unsupported download proxy scheme %q", parsed.Scheme)
+	}
+	if parsed.Host == "" {
+		return "", fmt.Errorf("download proxy host is required")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("download proxy URL must not contain credentials")
+	}
+	if parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("download proxy URL must not contain query or fragment")
+	}
+	return trimmed, nil
 }
 
 func CheckUpdate(downloadProxy string) (GithubRelease, GithubReleaseAsset, error) {
@@ -71,11 +110,15 @@ func LatestReleaseAsset(downloadProxy string) (GithubRelease, GithubReleaseAsset
 }
 
 func FetchLatestRelease(downloadProxy string) (GithubRelease, error) {
+	validatedProxy, err := ValidateDownloadProxyURL(downloadProxy)
+	if err != nil {
+		return GithubRelease{}, err
+	}
 	repo := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_REPO"))
 	if repo == "" {
 		repo = DefaultUpdateRepo
 	}
-	apiProxy := strings.TrimSpace(downloadProxy)
+	apiProxy := validatedProxy
 	if apiProxy == "https://gh-proxy.com/" || apiProxy == "https://gh-proxy.com" {
 		apiProxy = ""
 	}
@@ -87,15 +130,19 @@ func FetchLatestRelease(downloadProxy string) (GithubRelease, error) {
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("User-Agent", "cloud-vm-manager-updater")
 
-	token := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_TOKEN"))
-	if token == "" {
-		token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
-	}
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	// Never forward GitHub tokens to third-party download proxies.
+	if apiProxy == "" {
+		token := strings.TrimSpace(os.Getenv("UPDATE_GITHUB_TOKEN"))
+		if token == "" {
+			token = strings.TrimSpace(os.Getenv("GITHUB_TOKEN"))
+		}
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
 	}
 
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	client := netguard.NewRestrictedHTTPClient(30*time.Second, netguard.AllowPrivateProxy(), true)
+	resp, err := client.Do(req)
 	if err != nil {
 		return GithubRelease{}, err
 	}
@@ -261,19 +308,20 @@ func (r *DirectoryReplacement) Commit() error {
 	return os.RemoveAll(r.backup)
 }
 
-func DownloadFile(url, dest string) error {
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+func DownloadFile(rawURL, dest string) error {
+	req, err := http.NewRequest(http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("User-Agent", "cloud-vm-manager-updater")
-	resp, err := (&http.Client{Timeout: 120 * time.Second}).Do(req)
+	client := netguard.NewRestrictedHTTPClient(120*time.Second, netguard.AllowPrivateProxy(), true)
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
 		return fmt.Errorf("download returned %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -282,14 +330,29 @@ func DownloadFile(url, dest string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := io.Copy(out, resp.Body); err != nil {
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmp)
+		}
+	}()
+	written, err := io.Copy(out, io.LimitReader(resp.Body, maxDownloadBytes+1))
+	if err != nil {
 		_ = out.Close()
 		return err
+	}
+	if written > maxDownloadBytes {
+		_ = out.Close()
+		return fmt.Errorf("downloaded file exceeds maximum allowed size (%d bytes)", maxDownloadBytes)
 	}
 	if err := out.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmp, dest)
+	if err := os.Rename(tmp, dest); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
 }
 
 func verifyReleaseChecksum(release GithubRelease, assetName, archivePath, downloadProxy string) error {
@@ -358,6 +421,28 @@ func FileSHA256(path string) (string, error) {
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 
+func safePublicTargetPath(destPublicDir, rel string) (string, error) {
+	rel = strings.ReplaceAll(rel, "\\", "/")
+	rel = strings.TrimPrefix(rel, "public/")
+	if rel == "" || strings.Contains(rel, "\x00") {
+		return "", fmt.Errorf("invalid archive entry path %q", rel)
+	}
+	absDir, err := filepath.Abs(destPublicDir)
+	if err != nil {
+		return "", err
+	}
+	target := filepath.Join(absDir, filepath.FromSlash(rel))
+	absTarget, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	check, err := filepath.Rel(absDir, absTarget)
+	if err != nil || check == "." || check == ".." || strings.HasPrefix(check, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("archive entry escapes target directory: %q", rel)
+	}
+	return absTarget, nil
+}
+
 func extractArchiveFromZip(archivePath, destBin, destPublicDir string) (bool, error) {
 	reader, err := zip.OpenReader(archivePath)
 	if err != nil {
@@ -368,7 +453,10 @@ func extractArchiveFromZip(archivePath, destBin, destPublicDir string) (bool, er
 	binExtracted := false
 	hasPublic := false
 	for _, file := range reader.File {
-		name := strings.TrimPrefix(file.Name, "./")
+		if file.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		name := strings.ReplaceAll(strings.TrimPrefix(file.Name, "./"), "\\", "/")
 		baseName := filepath.Base(name)
 
 		if (baseName == "cloud-vm-manager" || baseName == "cloud-vm-manager.exe") && !file.FileInfo().IsDir() {
@@ -387,11 +475,14 @@ func extractArchiveFromZip(archivePath, destBin, destPublicDir string) (bool, er
 			if idx := strings.Index(name, "public/"); idx != -1 {
 				pubPath = name[idx:]
 			}
+			targetPath, err := safePublicTargetPath(destPublicDir, pubPath)
+			if err != nil {
+				return false, err
+			}
 			rc, err := file.Open()
 			if err != nil {
 				return false, err
 			}
-			targetPath := filepath.Join(destPublicDir, strings.TrimPrefix(pubPath, "public/"))
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				rc.Close()
 				return false, err
@@ -434,8 +525,7 @@ func extractArchiveFromTarGz(archivePath, destBin, destPublicDir string) (bool, 
 			return false, err
 		}
 
-		name := header.Name
-		name = strings.TrimPrefix(name, "./")
+		name := strings.ReplaceAll(strings.TrimPrefix(header.Name, "./"), "\\", "/")
 
 		if filepath.Base(name) == "cloud-vm-manager" && header.Typeflag == tar.TypeReg {
 			if err := writeFileFromReader(destBin, tr); err != nil {
@@ -447,7 +537,10 @@ func extractArchiveFromTarGz(archivePath, destBin, destPublicDir string) (bool, 
 			if idx := strings.Index(name, "public/"); idx != -1 {
 				pubPath = name[idx:]
 			}
-			targetPath := filepath.Join(destPublicDir, strings.TrimPrefix(pubPath, "public/"))
+			targetPath, err := safePublicTargetPath(destPublicDir, pubPath)
+			if err != nil {
+				return false, err
+			}
 			if err := os.MkdirAll(filepath.Dir(targetPath), 0o755); err != nil {
 				return false, err
 			}

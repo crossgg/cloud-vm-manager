@@ -1,4 +1,4 @@
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 ARG VERSION=dev
 
 WORKDIR /app
@@ -22,6 +22,8 @@ COPY --from=builder /app/cloud-vm-manager .
 COPY --from=builder /app/launcher .
 COPY --from=builder /app/public ./public
 RUN mkdir -p /app/config/keys /app/runtime && chmod +x /app/launcher /app/cloud-vm-manager
+
+ENV GIN_MODE=release
 
 EXPOSE 3000
 

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -547,7 +548,12 @@ func (az *AzureService) DeallocateAllVMs() ([]string, []string, error) {
 		if id == "" {
 			continue
 		}
-		url := fmt.Sprintf("https://management.azure.com%s/deallocate?api-version=2023-03-01", id)
+		cleanID, idErr := validateARMResourceID(id)
+		if idErr != nil {
+			errs = append(errs, fmt.Sprintf("%s: %v", name, idErr))
+			continue
+		}
+		url := fmt.Sprintf("https://management.azure.com%s/deallocate?api-version=2023-03-01", cleanID)
 		resp, err := az.request("POST", url, nil)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", name, err))
@@ -564,12 +570,40 @@ func (az *AzureService) DeallocateAllVMs() ([]string, []string, error) {
 	return stopped, errs, nil
 }
 
+func validateARMResourceID(id string) (string, error) {
+	trimmed := strings.TrimSpace(id)
+	if !strings.HasPrefix(trimmed, "/subscriptions/") {
+		return "", fmt.Errorf("invalid ARM resource id %q", id)
+	}
+	if strings.ContainsAny(trimmed, "?#\r\n\\") {
+		return "", fmt.Errorf("invalid characters in ARM resource id %q", id)
+	}
+	for _, seg := range strings.Split(trimmed, "/") {
+		if seg == ".." || seg == "." {
+			return "", fmt.Errorf("invalid path segment in ARM resource id %q", id)
+		}
+	}
+	return trimmed, nil
+}
+
+func escapeARMProviderType(providerType string) string {
+	parts := strings.Split(strings.Trim(providerType, "/"), "/")
+	for i, p := range parts {
+		parts[i] = url.PathEscape(p)
+	}
+	return strings.Join(parts, "/")
+}
+
 func (az *AzureService) DeleteResourceByID(resourceID, resourceType string) error {
 	if strings.TrimSpace(resourceID) == "" {
 		return fmt.Errorf("resource id is empty")
 	}
+	cleanID, err := validateARMResourceID(resourceID)
+	if err != nil {
+		return err
+	}
 	apiVersion := apiVersionForType(resourceType)
-	deleteURL := fmt.Sprintf("https://management.azure.com%s?api-version=%s", resourceID, apiVersion)
+	deleteURL := fmt.Sprintf("https://management.azure.com%s?api-version=%s", cleanID, url.QueryEscape(apiVersion))
 	resp, err := az.request("DELETE", deleteURL, nil)
 	if err != nil {
 		return err
@@ -636,10 +670,10 @@ func (az *AzureService) listArmResources(providerType, apiVersion, rg string) ([
 	var base string
 	if strings.TrimSpace(rg) != "" {
 		base = fmt.Sprintf("https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/%s?api-version=%s",
-			az.Account.SubId, rg, providerType, apiVersion)
+			url.PathEscape(az.Account.SubId), url.PathEscape(rg), escapeARMProviderType(providerType), url.QueryEscape(apiVersion))
 	} else {
 		base = fmt.Sprintf("https://management.azure.com/subscriptions/%s/providers/%s?api-version=%s",
-			az.Account.SubId, providerType, apiVersion)
+			url.PathEscape(az.Account.SubId), escapeARMProviderType(providerType), url.QueryEscape(apiVersion))
 	}
 	return az.fetchPagedARMList(base)
 }
@@ -648,10 +682,10 @@ func (az *AzureService) listGenericResources(rg string) ([]map[string]interface{
 	var base string
 	if strings.TrimSpace(rg) != "" {
 		base = fmt.Sprintf("https://management.azure.com/subscriptions/%s/resourceGroups/%s/resources?api-version=2021-04-01",
-			az.Account.SubId, rg)
+			url.PathEscape(az.Account.SubId), url.PathEscape(rg))
 	} else {
 		base = fmt.Sprintf("https://management.azure.com/subscriptions/%s/resources?api-version=2021-04-01",
-			az.Account.SubId)
+			url.PathEscape(az.Account.SubId))
 	}
 	return az.fetchPagedARMList(base)
 }

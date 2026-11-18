@@ -140,6 +140,8 @@ function cacheElements() {
     authForm: document.getElementById('auth-settings-form'),
     authEnabled: document.getElementById('auth-enabled'),
     authUsername: document.getElementById('auth-username'),
+    authCurrentPasswordWrap: document.getElementById('auth-current-password-wrap'),
+    authCurrentPassword: document.getElementById('auth-current-password'),
     authPassword: document.getElementById('auth-password'),
     authSessionHours: document.getElementById('auth-session-hours'),
     authCookieSecure: document.getElementById('auth-cookie-secure'),
@@ -944,6 +946,8 @@ async function loadAuthSettings() {
     const data = await fetchJSON('/api/settings/auth');
     els.authEnabled.checked = Boolean(data.enabled);
     els.authUsername.value = data.username || '';
+    if (els.authCurrentPassword) els.authCurrentPassword.value = '';
+    if (els.authCurrentPasswordWrap) els.authCurrentPasswordWrap.hidden = !data.has_password;
     els.authPassword.value = '';
     els.authSessionHours.value = data.session_hours || 12;
     els.authCookieSecure.checked = Boolean(data.cookie_secure);
@@ -964,12 +968,15 @@ async function saveAuthSettings(event) {
       body: {
         enabled: els.authEnabled.checked,
         username: els.authUsername.value.trim(),
+        current_password: els.authCurrentPassword ? els.authCurrentPassword.value : '',
         password: els.authPassword.value,
         session_hours: Number(els.authSessionHours.value || 12),
         cookie_secure: els.authCookieSecure.checked
       }
     });
+    if (els.authCurrentPassword) els.authCurrentPassword.value = '';
     els.authPassword.value = '';
+    await loadAuthSettings();
     updateAuthUI({ enabled: data.auth.enabled, authenticated: true, user: data.auth.username });
     showFormMessage('认证配置已保存，并已自动重载生效。', false);
     addLog('认证配置已保存并自动重载。', 'success');
@@ -1085,7 +1092,11 @@ async function openAccountModal(accountData = null) {
         if (document.getElementById('acc-az-sub')) document.getElementById('acc-az-sub').value = f.subscription_id || '';
         if (document.getElementById('acc-az-tenant')) document.getElementById('acc-az-tenant').value = f.tenant_id || '';
         if (document.getElementById('acc-az-client-id')) document.getElementById('acc-az-client-id').value = f.client_id || '';
-        if (document.getElementById('acc-az-client-secret')) document.getElementById('acc-az-client-secret').value = f.client_secret || '';
+        const azSecretInput = document.getElementById('acc-az-client-secret');
+        if (azSecretInput) {
+          azSecretInput.value = f.client_secret || '';
+          azSecretInput.placeholder = data.has_client_secret ? '已配置（保持 ******** 或留空则不修改）' : '填写客户端机密密码';
+        }
         if (document.getElementById('acc-az-rg')) document.getElementById('acc-az-rg').value = f.resource_group || '';
         if (document.getElementById('acc-az-location')) document.getElementById('acc-az-location').value = f.location || '';
       } else if (accountData.provider === 'oci') {
@@ -1371,6 +1382,14 @@ async function loadUpdateStatus(isManual = false) {
     }
     els.updateCurrentVersion.innerHTML = verHtml;
     applyDefaultUpdateProxy(data.downloadProxy || '');
+    const applyBtn = document.getElementById('apply-update-btn');
+    if (applyBtn) {
+      applyBtn.disabled = Boolean(data.disabled);
+    }
+    if (data.disabled && !isManual) {
+      els.updateMessage.textContent = '当前环境已通过 DISABLE_SELF_UPDATE 禁用在线热更。';
+      els.updateMessage.className = 'form-message';
+    }
     if (isManual) {
       els.updateLatestVersion.textContent = data.latestVersion || '-';
       els.updateAssetName.textContent = data.assetName || '-';

@@ -88,7 +88,7 @@ https://gh-proxy.com/
 Custom
 ```
 
-Release API requests, Release asset downloads, and `checksums.txt` downloads are proxied when a proxy is selected.
+Release API requests and Release asset downloads (including `checksums.txt`) use the selected proxy, while GitHub tokens (`GITHUB_TOKEN` / `UPDATE_GITHUB_TOKEN`) are never forwarded to third-party download proxies.
 
 Set a default proxy with:
 
@@ -97,3 +97,9 @@ UPDATE_DOWNLOAD_PROXY=https://gh-proxy.com/
 ```
 
 The web UI can override the default for a single update operation.
+
+To disable in-app updates and restarts entirely (recommended for public-facing production containers), set:
+
+```text
+DISABLE_SELF_UPDATE=true
+```

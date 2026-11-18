@@ -164,7 +164,13 @@ func testProxy(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
-	client := &http.Client{Timeout: 12 * time.Second, Transport: transport}
+	client := &http.Client{
+		Timeout:   12 * time.Second,
+		Transport: transport,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
 	request, _ := http.NewRequestWithContext(c.Request.Context(), http.MethodGet, "https://management.azure.com/", nil)
 	started := time.Now()
 	response, err := client.Do(request)

@@ -74,6 +74,7 @@ func saveCloudflareAccounts(c *gin.Context) {
 			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("名称 %q 包含不支持的字符", name)})
 			return
 		}
+		remark := strings.TrimSpace(a.Remark)
 		token := strings.TrimSpace(a.APIToken)
 		if strings.Contains(token, "***") {
 			if orig, ok := existingTokens[name]; ok {
@@ -86,9 +87,13 @@ func saveCloudflareAccounts(c *gin.Context) {
 				zoneID = orig
 			}
 		}
+		if config.HasUnsafeConfigLineValue(remark) || config.HasUnsafeConfigLineValue(token) || config.HasUnsafeConfigLineValue(zoneID) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("账号 %q 包含不支持的控制字符", name)})
+			return
+		}
 		accounts = append(accounts, config.CloudflareConfig{
 			Name:     name,
-			Remark:   strings.TrimSpace(a.Remark),
+			Remark:   remark,
 			APIToken: token,
 			ZoneID:   zoneID,
 		})
@@ -180,13 +185,24 @@ func saveDNSBindings(c *gin.Context) {
 		if recordType == "" {
 			recordType = "A"
 		}
+		cfName := strings.TrimSpace(b.Cloudflare)
+		providerName := strings.ToLower(strings.TrimSpace(b.Provider))
+		accountName := strings.TrimSpace(b.Account)
+		vmName := strings.TrimSpace(b.VM)
+		domain := strings.TrimSpace(b.Domain)
+		if config.HasUnsafeConfigLineValue(cfName) || config.HasUnsafeConfigLineValue(providerName) ||
+			config.HasUnsafeConfigLineValue(accountName) || config.HasUnsafeConfigLineValue(vmName) ||
+			config.HasUnsafeConfigLineValue(domain) || config.HasUnsafeConfigLineValue(recordType) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("绑定 %q 包含不支持的控制字符", name)})
+			return
+		}
 		bindings = append(bindings, config.DNSBinding{
 			Name:       name,
-			Cloudflare: strings.TrimSpace(b.Cloudflare),
-			Provider:   strings.ToLower(strings.TrimSpace(b.Provider)),
-			Account:    strings.TrimSpace(b.Account),
-			VM:         strings.TrimSpace(b.VM),
-			Domain:     strings.TrimSpace(b.Domain),
+			Cloudflare: cfName,
+			Provider:   providerName,
+			Account:    accountName,
+			VM:         vmName,
+			Domain:     domain,
 			Type:       recordType,
 			TTL:        ttl,
 			Proxied:    b.Proxied,
@@ -302,13 +318,19 @@ func saveVMDNSBindings(c *gin.Context) {
 		if recordType == "" {
 			recordType = "A"
 		}
+		cfName := strings.TrimSpace(b.Cloudflare)
+		domain := strings.TrimSpace(b.Domain)
+		if config.HasUnsafeConfigLineValue(cfName) || config.HasUnsafeConfigLineValue(domain) || config.HasUnsafeConfigLineValue(recordType) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("绑定 %q 包含不支持的控制字符", name)})
+			return
+		}
 		kept = append(kept, config.DNSBinding{
 			Name:       name,
-			Cloudflare: strings.TrimSpace(b.Cloudflare),
+			Cloudflare: cfName,
 			Provider:   strings.ToLower(providerName),
 			Account:    account,
 			VM:         vmID,
-			Domain:     strings.TrimSpace(b.Domain),
+			Domain:     domain,
 			Type:       recordType,
 			TTL:        ttl,
 			Proxied:    b.Proxied,
@@ -400,8 +422,8 @@ func maskSensitiveLines(content string) string {
 		trimmed := strings.TrimSpace(line)
 		if key, val, ok := strings.Cut(trimmed, "="); ok {
 			k := strings.TrimSpace(key)
-			v := strings.TrimSpace(val)
-			if k == "api_token" || k == "client_secret" || k == "password" || k == "zone_id" {
+			v := strings.Trim(strings.TrimSpace(val), `"`)
+			if k == "api_token" || k == "client_secret" || k == "password" || k == "zone_id" || k == "session_secret" || k == "password_hash" {
 				lines[i] = k + "=" + maskToken(v)
 			} else if k == "domain" {
 				lines[i] = k + "=" + maskDomain(v)

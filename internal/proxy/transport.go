@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/crossgg/cloud-vm-manager/internal/config"
+	"github.com/crossgg/cloud-vm-manager/internal/netguard"
 	xproxy "golang.org/x/net/proxy"
 )
 
@@ -89,8 +90,12 @@ func TransportForProxy(raw string) (http.RoundTripper, error) {
 		return nil, err
 	}
 	parsed, _ := url.Parse(normalized)
+	allowPrivate := netguard.AllowPrivateProxy()
+	proxyDialer := netguard.Dialer(15*time.Second, allowPrivate)
+
 	if parsed.Scheme == "http" || parsed.Scheme == "https" {
 		transport := DirectTransport()
+		transport.DialContext = proxyDialer.DialContext
 		transport.Proxy = http.ProxyURL(parsed)
 		return transport, nil
 	}
@@ -100,7 +105,7 @@ func TransportForProxy(raw string) (http.RoundTripper, error) {
 		password, _ := parsed.User.Password()
 		auth = &xproxy.Auth{User: parsed.User.Username(), Password: password}
 	}
-	dialer, err := xproxy.SOCKS5("tcp", parsed.Host, auth, xproxy.Direct)
+	dialer, err := xproxy.SOCKS5("tcp", parsed.Host, auth, proxyDialer)
 	if err != nil {
 		return nil, fmt.Errorf("create SOCKS5 dialer: %w", err)
 	}

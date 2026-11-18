@@ -158,7 +158,7 @@ func SaveProxyConfig(path string, proxies []ProxyConfig, bindings []ProxyBinding
 			return err
 		}
 	}
-	return os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0600)
+	return writeFileAtomic(path, []byte(strings.Join(lines, "\n")), 0600)
 }
 
 func ValidateProxyState(proxies []ProxyConfig, bindings []ProxyBinding) error {
@@ -236,6 +236,9 @@ func NormalizeProxyURL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return "", fmt.Errorf("proxy URL is required")
+	}
+	if HasUnsafeConfigLineValue(raw) {
+		return "", fmt.Errorf("proxy URL contains unsupported control characters")
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {

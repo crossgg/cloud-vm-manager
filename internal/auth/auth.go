@@ -8,8 +8,11 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -22,13 +25,23 @@ import (
 const SessionCookieName = "vm_manager_session"
 const maxLoginFailures = 5
 
+var DefaultTrustedProxyCIDRs = []string{
+	"127.0.0.1/32",
+	"::1/128",
+	"10.0.0.0/8",
+	"172.16.0.0/12",
+	"192.168.0.0/16",
+	"fc00::/7",
+}
+
 var loginLockDuration = 15 * time.Minute
 var loginFailureWindow = 10 * time.Minute
 
 type AuthService struct {
-	mu       sync.RWMutex
-	cfg      config.AuthConfig
-	attempts map[string]*loginAttempt
+	mu           sync.RWMutex
+	cfg          config.AuthConfig
+	attempts     map[string]*loginAttempt
+	trustedCIDRs []netip.Prefix
 }
 
 type loginAttempt struct {
@@ -48,7 +61,88 @@ func NewAuthService(cfg config.AuthConfig) (*AuthService, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &AuthService{cfg: normalized, attempts: map[string]*loginAttempt{}}, nil
+	svc := &AuthService{cfg: normalized, attempts: map[string]*loginAttempt{}}
+	svc.SetTrustedProxies(DefaultTrustedProxyCIDRs)
+	return svc, nil
+}
+
+// ResolveTrustedProxiesFromEnv resolves trusted proxy CIDRs from TRUSTED_PROXIES,
+// defaulting to loopback and private LAN ranges when unset.
+func ResolveTrustedProxiesFromEnv() ([]string, error) {
+	raw, set := os.LookupEnv("TRUSTED_PROXIES")
+	if !set {
+		return append([]string(nil), DefaultTrustedProxyCIDRs...), nil
+	}
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.EqualFold(trimmed, "none") || strings.EqualFold(trimmed, "off") || strings.EqualFold(trimmed, "false") {
+		return nil, nil
+	}
+	var out []string
+	for _, item := range strings.Split(trimmed, ",") {
+		item = strings.TrimSpace(item)
+		if item == "" {
+			continue
+		}
+		if _, err := parsePrefixOrIP(item); err != nil {
+			return nil, fmt.Errorf("invalid TRUSTED_PROXIES entry %q: %w", item, err)
+		}
+		out = append(out, item)
+	}
+	return out, nil
+}
+
+func parsePrefixOrIP(s string) (netip.Prefix, error) {
+	if p, err := netip.ParsePrefix(s); err == nil {
+		return p, nil
+	}
+	addr, err := netip.ParseAddr(s)
+	if err != nil {
+		return netip.Prefix{}, err
+	}
+	return netip.PrefixFrom(addr, addr.BitLen()), nil
+}
+
+func (a *AuthService) SetTrustedProxies(proxies []string) {
+	if a == nil {
+		return
+	}
+	prefixes := make([]netip.Prefix, 0, len(proxies))
+	for _, item := range proxies {
+		if p, err := parsePrefixOrIP(strings.TrimSpace(item)); err == nil {
+			prefixes = append(prefixes, p)
+		}
+	}
+	a.mu.Lock()
+	a.trustedCIDRs = prefixes
+	a.mu.Unlock()
+}
+
+func (a *AuthService) isTrustedRemote(c *gin.Context) bool {
+	if a == nil || c == nil || c.Request == nil {
+		return false
+	}
+	remote := strings.TrimSpace(c.Request.RemoteAddr)
+	if remote == "" {
+		return false
+	}
+	host, _, err := net.SplitHostPort(remote)
+	if err != nil {
+		host = remote
+	}
+	addr, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+	addr = addr.Unmap()
+	a.mu.RLock()
+	prefixes := a.trustedCIDRs
+	a.mu.RUnlock()
+	for _, p := range prefixes {
+		if p.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *AuthService) Enabled() bool {
@@ -88,7 +182,7 @@ func (a *AuthService) Middleware() gin.HandlerFunc {
 			NoStore(c)
 		}
 		if a.Enabled() && isUnsafeMethod(c.Request.Method) && strings.HasPrefix(c.Request.URL.Path, "/api/") {
-			if !sameOriginRequest(c) {
+			if !a.sameOriginRequest(c) {
 				c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"error": "invalid request origin"})
 				return
 			}
@@ -113,7 +207,7 @@ func isUnsafeMethod(method string) bool {
 	return method == http.MethodPost || method == http.MethodPut || method == http.MethodPatch || method == http.MethodDelete
 }
 
-func sameOriginRequest(c *gin.Context) bool {
+func (a *AuthService) sameOriginRequest(c *gin.Context) bool {
 	source := c.GetHeader("Origin")
 	if source == "" {
 		source = c.GetHeader("Referer")
@@ -126,27 +220,31 @@ func sameOriginRequest(c *gin.Context) bool {
 	if err != nil || parsed.Host == "" {
 		return false
 	}
-	if !strings.EqualFold(parsed.Host, requestHost(c)) {
+	if !strings.EqualFold(parsed.Host, a.requestHost(c)) {
 		return false
 	}
 
-	requestScheme := reqScheme(c)
+	requestScheme := a.reqScheme(c)
 	if requestScheme == "" {
 		return true
 	}
 	return strings.EqualFold(parsed.Scheme, requestScheme)
 }
 
-func requestHost(c *gin.Context) string {
-	if host := c.GetHeader("X-Forwarded-Host"); host != "" {
-		return strings.TrimSpace(strings.Split(host, ",")[0])
+func (a *AuthService) requestHost(c *gin.Context) string {
+	if a.isTrustedRemote(c) {
+		if host := c.GetHeader("X-Forwarded-Host"); host != "" {
+			return strings.TrimSpace(strings.Split(host, ",")[0])
+		}
 	}
 	return c.Request.Host
 }
 
-func reqScheme(c *gin.Context) string {
-	if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
-		return strings.TrimSpace(strings.Split(proto, ",")[0])
+func (a *AuthService) reqScheme(c *gin.Context) string {
+	if a.isTrustedRemote(c) {
+		if proto := c.GetHeader("X-Forwarded-Proto"); proto != "" {
+			return strings.TrimSpace(strings.Split(proto, ",")[0])
+		}
 	}
 	if c.Request.TLS != nil {
 		return "https"
@@ -315,8 +413,19 @@ func (a *AuthService) recordLoginFailure(c *gin.Context) {
 	defer a.mu.Unlock()
 	key := a.loginAttemptKey(c)
 	now := time.Now()
+	if len(a.attempts) >= 1024 {
+		for k, v := range a.attempts {
+			if (!v.LockedUntil.IsZero() && now.After(v.LockedUntil)) ||
+				(v.LockedUntil.IsZero() && now.Sub(v.FirstFailAt) > loginFailureWindow) {
+				delete(a.attempts, k)
+			}
+		}
+	}
 	attempt, ok := a.attempts[key]
 	if !ok || now.Sub(attempt.FirstFailAt) > loginFailureWindow {
+		if !ok && len(a.attempts) >= 10000 {
+			return
+		}
 		attempt = &loginAttempt{FirstFailAt: now}
 		a.attempts[key] = attempt
 	}

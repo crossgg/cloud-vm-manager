@@ -10,6 +10,7 @@
 
 - 📡 **HTTP API 文档**：[docs/api.md](docs/api.md)
 - 📝 **手动配置文件说明**：[docs/manual-config.md](docs/manual-config.md)（完整 INI 字段细节见 [CONFIGURATION.md](CONFIGURATION.md)）
+- 🛡️ **公网部署安全指南**：[docs/public-deployment.md](docs/public-deployment.md)
 - 🔑 **云厂商凭据获取指南**：[Azure 指南](docs/azure-config-guide.md) · [OCI 指南](docs/oci-config-guide.md) · [GCP 指南](docs/gcp-config-guide.md)
 - 🔄 **在线更新与发布说明**：[UPDATE.md](UPDATE.md)
 - 📋 **版本更新日志**：[CHANGELOG.md](CHANGELOG.md)
@@ -20,7 +21,7 @@
 
 ### 从源码运行
 
-需要 Go 1.22+：
+需要 Go 1.24+：
 
 ```bash
 go mod tidy
@@ -94,12 +95,15 @@ docker run -d \
 
 ---
 
-## 反向代理部署（宝塔 / Nginx + HTTPS）
+## 反向代理与公网部署（宝塔 / Nginx + HTTPS）
+
+> 完整公网安全加固参数（`BLOCK_PRIVATE_PROXY`、`TRUSTED_PROXIES`、`DISABLE_SELF_UPDATE`、仅监听 `127.0.0.1:3000` 等）请参见：**[公网部署安全指南](docs/public-deployment.md)**。
 
 如需开放公网访问，强烈建议：
-1. 在 WebUI **「系统设置 → 登录认证」**（或手动修改配置）开启登录认证，设置强密码，并在通过 HTTPS 访问时勾选 **HTTPS Cookie**。
-2. 在反向代理中添加站点并配置 SSL 证书，反代目标填写 `http://127.0.0.1:3000`。
-3. 确保转发以下请求头（特别是 `Host` 与 `X-Forwarded-Proto`，否则开启认证后登录及修改类 POST 请求会因同源校验失败而被拒绝）：
+1. 在端口映射上仅绑定 `127.0.0.1:3000:3000`，并结合环境变量开启公网加固（如 `BLOCK_PRIVATE_PROXY=true`、`DISABLE_SELF_UPDATE=true`、`TRUSTED_PROXIES=127.0.0.1/32,::1/128`）。
+2. 在 WebUI **「系统设置 → 登录认证」**（或手动修改配置）开启登录认证，设置强密码，并在通过 HTTPS 访问时勾选 **HTTPS Cookie**。
+3. 在反向代理中添加站点并配置 SSL 证书，反代目标填写 `http://127.0.0.1:3000`。
+4. 确保转发以下请求头（特别是 `Host` 与 `X-Forwarded-Proto`，否则开启认证后登录及修改类 POST 请求会因同源校验失败而被拒绝）：
 
 ```nginx
 location / {

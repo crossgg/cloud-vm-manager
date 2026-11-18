@@ -8,16 +8,18 @@ import (
 	"strings"
 
 	"github.com/crossgg/cloud-vm-manager/internal/config"
+	"github.com/crossgg/cloud-vm-manager/internal/updater"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/crypto/bcrypt"
 )
 
 type authSettingsRequest struct {
-	Enabled      bool   `json:"enabled"`
-	Username     string `json:"username"`
-	Password     string `json:"password"`
-	SessionHours int    `json:"session_hours"`
-	CookieSecure bool   `json:"cookie_secure"`
+	Enabled         bool   `json:"enabled"`
+	Username        string `json:"username"`
+	Password        string `json:"password"`
+	CurrentPassword string `json:"current_password"`
+	SessionHours    int    `json:"session_hours"`
+	CookieSecure    bool   `json:"cookie_secure"`
 }
 
 func getConfigStatus(c *gin.Context) {
@@ -63,6 +65,17 @@ func updateAuthSettings(c *gin.Context) {
 	}
 
 	current := currentAuthConfig()
+	requiresCurrentPassword := current.PasswordHash != "" && (req.Password != "" ||
+		(!req.Enabled && current.Enabled) ||
+		username != current.Username ||
+		(!req.CookieSecure && current.CookieSecure))
+	if requiresCurrentPassword {
+		if req.CurrentPassword == "" || bcrypt.CompareHashAndPassword([]byte(current.PasswordHash), []byte(req.CurrentPassword)) != nil {
+			c.JSON(http.StatusForbidden, gin.H{"error": "当前密码错误或未填写"})
+			return
+		}
+	}
+
 	next := current
 	next.Enabled = req.Enabled
 	next.Username = username
@@ -139,9 +152,15 @@ func updateUpdateSettings(c *gin.Context) {
 		return
 	}
 
+	proxy, err := updater.ValidateDownloadProxyURL(payload.DownloadProxy)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
 	configPath := currentConfigPath()
 	updateCfg := config.UpdateConfig{
-		DownloadProxy: strings.TrimSpace(payload.DownloadProxy),
+		DownloadProxy: proxy,
 	}
 
 	if err := config.SaveUpdateConfig(configPath, updateCfg); err != nil {

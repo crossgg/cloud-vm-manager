@@ -61,7 +61,7 @@ func (az *AzureService) getToken() (string, error) {
 
 	var resp *http.Response
 	var err error
-	tokenURL := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/token", az.Account.TenantId)
+	tokenURL := fmt.Sprintf("https://login.microsoftonline.com/%s/oauth2/token", url.PathEscape(az.Account.TenantId))
 	for attempt := 0; attempt < 3; attempt++ {
 		resp, err = az.Client.PostForm(tokenURL, data)
 		if err == nil {
@@ -174,7 +174,7 @@ func (az *AzureService) requestWithRetry(method, url string, bodyBytes []byte, m
 func (az *AzureService) ListVMs() ([]map[string]interface{}, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.Compute/virtualMachines?api-version=2023-03-01",
-		az.Account.SubId,
+		url.PathEscape(az.Account.SubId),
 	)
 	resp, err := az.request("GET", url, nil)
 	if err != nil {
@@ -210,9 +210,9 @@ func (az *AzureService) ListVMs() ([]map[string]interface{}, error) {
 func (az *AzureService) GetVM(vmName string) (map[string]interface{}, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s?api-version=2023-03-01&$expand=instanceView",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		vmName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(vmName),
 	)
 	resp, err := az.request("GET", url, nil)
 	if err != nil {
@@ -320,9 +320,9 @@ func (az *AzureService) GetVM(vmName string) (map[string]interface{}, error) {
 func (az *AzureService) getNetworkInterface(nicName string) (map[string]interface{}, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkInterfaces/%s?api-version=2023-04-01",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		nicName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(nicName),
 	)
 	resp, err := az.request("GET", url, nil)
 	if err != nil {
@@ -336,7 +336,11 @@ func (az *AzureService) getNetworkInterface(nicName string) (map[string]interfac
 }
 
 func (az *AzureService) getPublicIP(publicIPId string) (map[string]interface{}, error) {
-	url := fmt.Sprintf("https://management.azure.com%s?api-version=2023-04-01", publicIPId)
+	cleanID, err := validateARMResourceID(publicIPId)
+	if err != nil {
+		return nil, err
+	}
+	url := fmt.Sprintf("https://management.azure.com%s?api-version=2023-04-01", cleanID)
 	resp, err := az.request("GET", url, nil)
 	if err != nil {
 		return nil, err
@@ -437,7 +441,7 @@ func (az *AzureService) GetAccountBalance() (*provider.AccountBalance, error) {
 func (az *AzureService) getBalanceFromConsumptionAPI() (*BalanceResult, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.Consumption/balances?api-version=2023-11-01",
-		az.Account.SubId,
+		url.PathEscape(az.Account.SubId),
 	)
 
 	resp, err := az.request("GET", url, nil)
@@ -552,9 +556,9 @@ func (az *AzureService) getBalanceFromBillingAPI() (*BalanceResult, error) {
 func (az *AzureService) StartVM(vmName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s/start?api-version=2023-03-01",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		vmName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(vmName),
 	)
 	resp, err := az.request("POST", url, nil)
 	if err != nil {
@@ -567,9 +571,9 @@ func (az *AzureService) StartVM(vmName string) error {
 func (az *AzureService) StopVM(vmName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s/powerOff?api-version=2023-03-01",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		vmName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(vmName),
 	)
 	resp, err := az.request("POST", url, nil)
 	if err != nil {
@@ -582,9 +586,9 @@ func (az *AzureService) StopVM(vmName string) error {
 func (az *AzureService) RestartVM(vmName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Compute/virtualMachines/%s/restart?api-version=2023-03-01",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		vmName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(vmName),
 	)
 	resp, err := az.request("POST", url, nil)
 	if err != nil {
@@ -659,9 +663,9 @@ func (az *AzureService) ChangeIP(vmName string) (*provider.ChangeIPResult, error
 func (az *AzureService) CreatePublicIP(ipName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s?api-version=2023-04-01",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		ipName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(ipName),
 	)
 	body := map[string]interface{}{
 		"location": az.Account.Location,
@@ -691,9 +695,9 @@ func (az *AzureService) CreatePublicIP(ipName string) error {
 func (az *AzureService) UpdateNetworkInterface(nicName, newIPName string) error {
 	getUrl := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkInterfaces/%s?api-version=2023-04-01",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		nicName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(nicName),
 	)
 
 	resp, err := az.request("GET", getUrl, nil)
@@ -708,9 +712,9 @@ func (az *AzureService) UpdateNetworkInterface(nicName, newIPName string) error 
 	nic["properties"].(map[string]interface{})["ipConfigurations"].([]interface{})[0].(map[string]interface{})["properties"].(map[string]interface{})["publicIPAddress"] = map[string]interface{}{
 		"id": fmt.Sprintf(
 			"/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s",
-			az.Account.SubId,
-			az.Account.ResourceGroup,
-			newIPName,
+			url.PathEscape(az.Account.SubId),
+			url.PathEscape(az.Account.ResourceGroup),
+			url.PathEscape(newIPName),
 		),
 	}
 
@@ -733,9 +737,9 @@ func (az *AzureService) UpdateNetworkInterface(nicName, newIPName string) error 
 func (az *AzureService) DeletePublicIP(ipName string) error {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/publicIPAddresses/%s?api-version=2023-04-01",
-		az.Account.SubId,
-		az.Account.ResourceGroup,
-		ipName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(az.Account.ResourceGroup),
+		url.PathEscape(ipName),
 	)
 	resp, err := az.request("DELETE", url, nil)
 	if err != nil {
@@ -777,7 +781,7 @@ type AzureNSG struct {
 func (az *AzureService) ListNSGs() ([]AzureNSG, error) {
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.Network/networkSecurityGroups?api-version=2023-05-01",
-		az.Account.SubId,
+		url.PathEscape(az.Account.SubId),
 	)
 	resp, err := az.request("GET", url, nil)
 	if err != nil {
@@ -958,10 +962,10 @@ func (az *AzureService) CreateOrUpdateNSGRule(rg, nsgName string, rule AzureNSGR
 
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkSecurityGroups/%s/securityRules/%s?api-version=2023-05-01",
-		az.Account.SubId,
-		rg,
-		nsgName,
-		rule.Name,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(rg),
+		url.PathEscape(nsgName),
+		url.PathEscape(rule.Name),
 	)
 
 	resp, err := az.request("PUT", url, bytes.NewBuffer(body))
@@ -983,10 +987,10 @@ func (az *AzureService) DeleteNSGRule(rg, nsgName, ruleName string) error {
 	}
 	url := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkSecurityGroups/%s/securityRules/%s?api-version=2023-05-01",
-		az.Account.SubId,
-		rg,
-		nsgName,
-		ruleName,
+		url.PathEscape(az.Account.SubId),
+		url.PathEscape(rg),
+		url.PathEscape(nsgName),
+		url.PathEscape(ruleName),
 	)
 
 	resp, err := az.request("DELETE", url, nil)

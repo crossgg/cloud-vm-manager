@@ -1,14 +1,19 @@
 package server
 
 import (
+	"crypto/sha256"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/gin-gonic/gin"
 )
+
+const maxOCIObjectUploadBytes int64 = 128 << 20
 
 func terminateOCIInstance(c *gin.Context) {
 	instanceID := c.Param("name")
@@ -390,9 +395,14 @@ func uploadOCIObject(c *gin.Context) {
 	if !ok {
 		return
 	}
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxOCIObjectUploadBytes+(2<<20))
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择上传文件"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请选择上传文件或文件超出 128MB 限制"})
+		return
+	}
+	if fileHeader.Size > maxOCIObjectUploadBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "上传文件大小不能超过 128MB"})
 		return
 	}
 	f, err := fileHeader.Open()
@@ -402,16 +412,33 @@ func uploadOCIObject(c *gin.Context) {
 	}
 	defer f.Close()
 
-	data, err := io.ReadAll(io.LimitReader(f, 128<<20))
+	tmpFile, err := os.CreateTemp("", "oci-upload-*")
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+	}()
+
+	hasher := sha256.New()
+	written, err := io.Copy(io.MultiWriter(tmpFile, hasher), io.LimitReader(f, maxOCIObjectUploadBytes+1))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if written > maxOCIObjectUploadBytes {
+		c.JSON(http.StatusRequestEntityTooLarge, gin.H{"error": "上传文件大小不能超过 128MB"})
+		return
+	}
+	sumBase64 := base64.StdEncoding.EncodeToString(hasher.Sum(nil))
 
 	prefix := strings.TrimLeft(strings.TrimSpace(c.PostForm("prefix")), "/")
 	objectName := strings.TrimSpace(c.PostForm("objectName"))
 	if objectName == "" {
-		objectName = filepath.Base(fileHeader.Filename)
+		objectName = filepath.Base(strings.ReplaceAll(fileHeader.Filename, "\\", "/"))
 	}
 	if prefix != "" {
 		if !strings.HasSuffix(prefix, "/") {
@@ -421,7 +448,7 @@ func uploadOCIObject(c *gin.Context) {
 	}
 
 	contentType := fileHeader.Header.Get("Content-Type")
-	if err := ociSvc.PutObject(c.Param("bucket"), objectName, contentType, data); err != nil {
+	if err := ociSvc.PutObjectFile(c.Param("bucket"), objectName, contentType, tmpFile, written, sumBase64); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -443,8 +470,18 @@ func downloadOCIObject(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	filename := filepath.Base(objectName)
-	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, strings.ReplaceAll(filename, `"`, "")))
+	filename := filepath.Base(strings.ReplaceAll(objectName, "\\", "/"))
+	filename = strings.Map(func(r rune) rune {
+		if r == '"' || r == '\r' || r == '\n' || r == 0 {
+			return -1
+		}
+		return r
+	}, filename)
+	if filename == "" || filename == "." || filename == ".." {
+		filename = "download"
+	}
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Header("Content-Disposition", fmt.Sprintf(`attachment; filename="%s"`, filename))
 	c.Data(http.StatusOK, contentType, data)
 }
 

@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -10,9 +11,51 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+func writeFileAtomic(path string, data []byte, perm os.FileMode) error {
+	dir := filepath.Dir(path)
+	if dir != "." && dir != "" {
+		if err := os.MkdirAll(dir, 0700); err != nil {
+			return err
+		}
+	}
+	tmp, err := os.CreateTemp(dir, ".tmp-*")
+	if err != nil {
+		return err
+	}
+	tmpName := tmp.Name()
+	cleanup := true
+	defer func() {
+		if cleanup {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return err
+	}
+	cleanup = false
+	return nil
+}
+
 func SaveAuthConfig(path string, auth AuthConfig) error {
 	if path == "" {
 		return fmt.Errorf("config path is empty")
+	}
+	if HasUnsafeConfigValue(auth.Username) {
+		return fmt.Errorf("auth username contains unsupported characters")
+	}
+	if HasUnsafeConfigLineValue(auth.PasswordHash) || HasUnsafeConfigLineValue(auth.SessionSecret) {
+		return fmt.Errorf("auth configuration contains unsupported control characters")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -20,7 +63,7 @@ func SaveAuthConfig(path string, auth AuthConfig) error {
 	}
 	content := string(data)
 	if strings.Contains(content, "=begin") {
-		return os.WriteFile(path, []byte(upsertAuthBlock(content, auth)), 0600)
+		return writeFileAtomic(path, []byte(upsertAuthBlock(content, auth)), 0600)
 	}
 	return saveYAMLAuthConfig(path, data, auth)
 }
@@ -90,12 +133,15 @@ func saveYAMLAuthConfig(path string, data []byte, auth AuthConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, next, 0600)
+	return writeFileAtomic(path, next, 0600)
 }
 
 func SaveUpdateConfig(path string, update UpdateConfig) error {
 	if path == "" {
 		return fmt.Errorf("config path is empty")
+	}
+	if HasUnsafeConfigLineValue(update.DownloadProxy) {
+		return fmt.Errorf("download_proxy contains unsupported characters")
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -103,7 +149,7 @@ func SaveUpdateConfig(path string, update UpdateConfig) error {
 	}
 	content := string(data)
 	if strings.Contains(content, "=begin") {
-		return os.WriteFile(path, []byte(upsertUpdateBlock(content, update)), 0600)
+		return writeFileAtomic(path, []byte(upsertUpdateBlock(content, update)), 0600)
 	}
 	return saveYAMLUpdateConfig(path, data, update)
 }
@@ -163,7 +209,7 @@ func saveYAMLUpdateConfig(path string, data []byte, update UpdateConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, next, 0600)
+	return writeFileAtomic(path, next, 0600)
 }
 
 // SaveDNSConfig writes the entire dns.conf file from the given cloudflare accounts and dns bindings.
@@ -180,6 +226,12 @@ func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings 
 		if cf.Name == "" {
 			continue
 		}
+		if HasUnsafeConfigValue(cf.Name) {
+			return fmt.Errorf("cloudflare account name %q contains unsupported characters", cf.Name)
+		}
+		if HasUnsafeConfigLineValue(cf.Remark) || HasUnsafeConfigLineValue(cf.APIToken) || HasUnsafeConfigLineValue(cf.ZoneID) {
+			return fmt.Errorf("cloudflare account %q contains unsupported control characters", cf.Name)
+		}
 		if _, exists := cfMap[cf.Name]; !exists {
 			cfOrder = append(cfOrder, cf.Name)
 		}
@@ -192,6 +244,14 @@ func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings 
 	for _, b := range bindings {
 		if b.Name == "" {
 			continue
+		}
+		if HasUnsafeConfigValue(b.Name) {
+			return fmt.Errorf("dns binding name %q contains unsupported characters", b.Name)
+		}
+		if HasUnsafeConfigLineValue(b.Cloudflare) || HasUnsafeConfigLineValue(b.Provider) ||
+			HasUnsafeConfigLineValue(b.Account) || HasUnsafeConfigLineValue(b.VM) ||
+			HasUnsafeConfigLineValue(b.Domain) || HasUnsafeConfigLineValue(b.Type) {
+			return fmt.Errorf("dns binding %q contains unsupported control characters", b.Name)
 		}
 		if _, exists := dnsMap[b.Name]; !exists {
 			dnsOrder = append(dnsOrder, b.Name)
@@ -232,7 +292,7 @@ func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings 
 	}
 	sb.WriteString("dns=end\n")
 
-	return os.WriteFile(path, []byte(sb.String()), 0600)
+	return writeFileAtomic(path, []byte(sb.String()), 0600)
 }
 
 // ParseDNSConfContent parses raw dns.conf content and returns cloudflare accounts and bindings.
@@ -373,6 +433,6 @@ func saveBlockAccountKeys(path string, provider string, accountName string, keys
 		result = append(result, rawLine)
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(result, "\n")), 0600)
+	return writeFileAtomic(path, []byte(strings.Join(result, "\n")), 0600)
 }
 

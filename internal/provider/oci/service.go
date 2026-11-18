@@ -20,6 +20,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"sort"
 	"strings"
 	"sync"
@@ -382,6 +383,37 @@ func (o *OCIService) doRawRequest(method, endpoint, contentType string, payload 
 	return resp.StatusCode, resp.Header, data, nil
 }
 
+func (o *OCIService) doRawFileRequest(method, endpoint, contentType string, file *os.File, size int64, contentSHA256Base64 string) error {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	var body io.Reader = file
+	if size == 0 {
+		body = http.NoBody
+	}
+	req, err := http.NewRequest(method, endpoint, body)
+	if err != nil {
+		return err
+	}
+	req.ContentLength = size
+	if err := o.signRequestWithDigest(req, contentType, size, contentSHA256Base64); err != nil {
+		return err
+	}
+	resp, err := o.Client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return err
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("OCI API %s %s returned %d: %s", method, endpoint, resp.StatusCode, string(data))
+	}
+	return nil
+}
+
 func (o *OCIService) sendSignedRequest(method, endpoint, contentType string, payload []byte) (*http.Response, error) {
 	const maxAttempts = 3
 	var lastErr error
@@ -460,6 +492,11 @@ func (o *OCIService) sign(req *http.Request, payload []byte) error {
 }
 
 func (o *OCIService) signWithContentType(req *http.Request, payload []byte, contentType string) error {
+	sum := sha256.Sum256(payload)
+	return o.signRequestWithDigest(req, contentType, int64(len(payload)), base64.StdEncoding.EncodeToString(sum[:]))
+}
+
+func (o *OCIService) signRequestWithDigest(req *http.Request, contentType string, contentLength int64, contentSHA256Base64 string) error {
 	if o.key == nil {
 		key, err := cryptoutil.LoadRSAPrivateKey(o.Account.KeyFile)
 		if err != nil {
@@ -476,10 +513,9 @@ func (o *OCIService) signWithContentType(req *http.Request, payload []byte, cont
 
 	headers := []string{"(request-target)", "host", "date"}
 	if req.Method == "POST" || req.Method == "PUT" {
-		sum := sha256.Sum256(payload)
-		req.Header.Set("x-content-sha256", base64.StdEncoding.EncodeToString(sum[:]))
+		req.Header.Set("x-content-sha256", contentSHA256Base64)
 		req.Header.Set("Content-Type", contentType)
-		req.Header.Set("Content-Length", fmt.Sprintf("%d", len(payload)))
+		req.Header.Set("Content-Length", fmt.Sprintf("%d", contentLength))
 		headers = append(headers, "x-content-sha256", "content-type", "content-length")
 	}
 

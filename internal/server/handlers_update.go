@@ -17,6 +17,7 @@ func getUpdateStatus(c *gin.Context) {
 		CurrentVersion: updater.Version,
 		RuntimePath:    updater.RuntimeBinPath,
 		DownloadProxy:  defaultDownloadProxy(),
+		Disabled:       updater.IsSelfUpdateDisabled(),
 	}
 
 	if exe, err := os.Executable(); err == nil {
@@ -26,15 +27,20 @@ func getUpdateStatus(c *gin.Context) {
 	}
 
 	if c.Query("check") == "true" {
-		release, asset, err := updater.LatestReleaseAsset(c.Query("download_proxy"))
+		proxy, err := updater.ValidateDownloadProxyURL(c.Query("download_proxy"))
 		if err != nil {
 			info.CheckError = err.Error()
 		} else {
-			info.LatestVersion = release.TagName
-			info.UpdateAvailable = updater.Version == "dev" || release.TagName != updater.Version
-			info.AssetName = asset.Name
-			info.ReleaseURL = release.HTMLURL
-			info.ReleaseNotes = strings.TrimSpace(release.Body)
+			release, asset, err := updater.LatestReleaseAsset(proxy)
+			if err != nil {
+				info.CheckError = err.Error()
+			} else {
+				info.LatestVersion = release.TagName
+				info.UpdateAvailable = updater.Version == "dev" || release.TagName != updater.Version
+				info.AssetName = asset.Name
+				info.ReleaseURL = release.HTMLURL
+				info.ReleaseNotes = strings.TrimSpace(release.Body)
+			}
 		}
 	}
 
@@ -42,6 +48,10 @@ func getUpdateStatus(c *gin.Context) {
 }
 
 func applyUpdate(c *gin.Context) {
+	if updater.IsSelfUpdateDisabled() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "self-update is disabled by DISABLE_SELF_UPDATE"})
+		return
+	}
 	var payload struct {
 		DownloadProxy string `json:"downloadProxy"`
 	}
@@ -50,13 +60,19 @@ func applyUpdate(c *gin.Context) {
 		return
 	}
 
-	release, asset, err := updater.LatestReleaseAsset(payload.DownloadProxy)
+	proxy, err := updater.ValidateDownloadProxyURL(payload.DownloadProxy)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	release, asset, err := updater.LatestReleaseAsset(proxy)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	if err := updater.InstallReleaseAsset(release, asset, payload.DownloadProxy, RuntimePublicDir); err != nil {
+	if err := updater.InstallReleaseAsset(release, asset, proxy, RuntimePublicDir); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
@@ -85,6 +101,10 @@ func defaultDownloadProxy() string {
 }
 
 func resetUpdate(c *gin.Context) {
+	if updater.IsSelfUpdateDisabled() {
+		c.JSON(http.StatusForbidden, gin.H{"error": "self-update is disabled by DISABLE_SELF_UPDATE"})
+		return
+	}
 	runtimeBin := updater.RuntimeBinPath
 	_ = os.Remove(runtimeBin)
 	_ = os.Remove(runtimeBin + ".corrupted")

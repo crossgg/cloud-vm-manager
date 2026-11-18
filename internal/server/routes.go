@@ -1,7 +1,9 @@
 package server
 
 import (
+	"fmt"
 	"net/http"
+	"os"
 	"path"
 	"path/filepath"
 	"strings"
@@ -11,7 +13,22 @@ import (
 )
 
 func SetupRouter(authService *auth.AuthService) *gin.Engine {
+	if strings.TrimSpace(os.Getenv("GIN_MODE")) == "" {
+		gin.SetMode(gin.ReleaseMode)
+	}
 	r := gin.Default()
+	trustedProxies, err := auth.ResolveTrustedProxiesFromEnv()
+	if err != nil {
+		fmt.Printf("warning: %v, falling back to no trusted proxies\n", err)
+		trustedProxies = nil
+	}
+	if err := r.SetTrustedProxies(trustedProxies); err != nil {
+		fmt.Printf("warning: set trusted proxies failed: %v\n", err)
+	}
+	if authService != nil {
+		authService.SetTrustedProxies(trustedProxies)
+	}
+	r.Use(securityHeadersMiddleware())
 	authService.Register(r)
 	r.Use(authService.Middleware())
 
@@ -212,7 +229,12 @@ func registerPages(r *gin.Engine, a *auth.AuthService) {
 
 	r.GET("/public/*filepath", func(c *gin.Context) {
 		auth.NoStore(c)
-		requested := path.Clean("/" + strings.TrimPrefix(c.Param("filepath"), "/"))
+		raw := c.Param("filepath")
+		if strings.Contains(raw, "\\") || strings.Contains(raw, "\x00") {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		requested := path.Clean("/" + strings.TrimPrefix(raw, "/"))
 		if requested == "/" {
 			c.AbortWithStatus(http.StatusNotFound)
 			return
@@ -223,8 +245,30 @@ func registerPages(r *gin.Engine, a *auth.AuthService) {
 				return
 			}
 		}
-		c.File(filepath.Join(ActivePublicDir(), strings.TrimPrefix(requested, "/")))
+		baseDir := ActivePublicDir()
+		targetPath := filepath.Join(baseDir, filepath.FromSlash(strings.TrimPrefix(requested, "/")))
+		absBase, errBase := filepath.Abs(baseDir)
+		absTarget, errTarget := filepath.Abs(targetPath)
+		if errBase != nil || errTarget != nil {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		rel, errRel := filepath.Rel(absBase, absTarget)
+		if errRel != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			c.AbortWithStatus(http.StatusNotFound)
+			return
+		}
+		c.File(absTarget)
 	})
+}
+
+func securityHeadersMiddleware() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Header("X-Content-Type-Options", "nosniff")
+		c.Header("X-Frame-Options", "SAMEORIGIN")
+		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		c.Next()
+	}
 }
 
 func isLoginAsset(requested string) bool {

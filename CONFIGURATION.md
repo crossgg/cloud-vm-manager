@@ -56,8 +56,9 @@ cookie_secure=true               # 是否只允许 HTTPS 发送 Cookie；公网 
 安全行为：
 
 - 连续登录失败会触发限速锁定，降低密码被在线爆破的风险。
+- 已有密码保护时，通过管理页修改密码、用户名、关闭认证或关闭 `HTTPS Cookie` 都需要验证当前密码。
 - 通过管理页修改密码时，程序会自动生成新的 `session_secret`，所有旧登录会话会立即失效。
-- 开启认证后，所有 `POST /api/*` 请求都会做同源校验。公网通过 Nginx、Caddy 等反向代理部署时，请保留正确的 `Host`，并传递 `X-Forwarded-Proto`，否则 HTTPS 站点的 POST 请求可能被判定为来源不匹配。
+- 开启认证后，所有 `POST /api/*` 请求都会做同源校验。公网通过 Nginx、Caddy 等反向代理部署时，请保留正确的 `Host`，并传递 `X-Forwarded-Proto`，并确保反代地址在 `TRUSTED_PROXIES` 信任范围内，否则 HTTPS 站点的 POST 请求可能被判定为来源不匹配。更多公网安全设置请参考 [公网部署安全指南](docs/public-deployment.md)。
 
 在 PowerShell 中生成 `session_secret`：
 

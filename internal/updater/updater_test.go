@@ -1,9 +1,13 @@
 package updater
 
 import (
+	"archive/zip"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -121,5 +125,80 @@ func assertTestAsset(t *testing.T, path, want string) {
 	}
 	if string(data) != want {
 		t.Fatalf("asset %s = %q, want %q", path, data, want)
+	}
+}
+
+func TestValidateDownloadProxyURL(t *testing.T) {
+	if _, err := ValidateDownloadProxyURL("https://gh-proxy.com/"); err != nil {
+		t.Fatalf("expected valid https proxy, got %v", err)
+	}
+	for _, bad := range []string{
+		"file:///etc/passwd",
+		"https://user:pass@proxy.example.com/",
+		"https://proxy.example.com/?a=1",
+		"https://proxy.example.com/\n[auth]",
+	} {
+		if _, err := ValidateDownloadProxyURL(bad); err == nil {
+			t.Fatalf("expected error for %q, got nil", bad)
+		}
+	}
+}
+
+func TestFetchLatestReleaseDoesNotLeakTokenToProxy(t *testing.T) {
+	var sawAuthHeader string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sawAuthHeader = r.Header.Get("Authorization")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"tag_name":"v1.0.0","assets":[]}`))
+	}))
+	defer srv.Close()
+
+	t.Setenv("GITHUB_TOKEN", "ghp_secret_token_should_not_leak")
+	rel, err := FetchLatestRelease(srv.URL)
+	if err != nil {
+		t.Fatalf("FetchLatestRelease failed: %v", err)
+	}
+	if rel.TagName != "v1.0.0" {
+		t.Fatalf("unexpected tag: %q", rel.TagName)
+	}
+	if sawAuthHeader != "" {
+		t.Fatalf("expected empty Authorization header when using proxy, got %q", sawAuthHeader)
+	}
+}
+
+func TestExtractArchiveFromZipRejectsZipSlip(t *testing.T) {
+	root := t.TempDir()
+	zipPath := filepath.Join(root, "evil.zip")
+	f, err := os.Create(zipPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	zw := zip.NewWriter(f)
+	for name, content := range map[string]string{
+		"cloud-vm-manager":       "bin",
+		"public/../../pwned.txt": "evil",
+	} {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte(content)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	destBin := filepath.Join(root, "bin")
+	destPublic := filepath.Join(root, "out", "public")
+	if _, err := extractArchiveFromZip(zipPath, destBin, destPublic); err == nil || !strings.Contains(err.Error(), "escapes target directory") {
+		t.Fatalf("expected Zip Slip rejection error, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "pwned.txt")); !os.IsNotExist(err) {
+		t.Fatalf("evil file should not exist outside target dir")
 	}
 }

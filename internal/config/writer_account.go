@@ -17,6 +17,17 @@ func SaveCloudAccount(path string, provider string, accountName string, fields m
 	if provider == "" || accountName == "" {
 		return fmt.Errorf("provider and account name are required")
 	}
+	if HasUnsafeConfigValue(provider) || HasUnsafeConfigValue(accountName) {
+		return fmt.Errorf("provider or account name contains unsupported characters")
+	}
+	for k, v := range fields {
+		if HasUnsafeConfigValue(k) {
+			return fmt.Errorf("field key %q contains unsupported characters", k)
+		}
+		if HasUnsafeConfigLineValue(v) {
+			return fmt.Errorf("field %q contains unsupported control characters", k)
+		}
+	}
 
 	data, err := os.ReadFile(path)
 	if err != nil && !os.IsNotExist(err) {
@@ -74,7 +85,7 @@ func SaveCloudAccount(path string, provider string, accountName string, fields m
 		} else {
 			out = trimmed + newBlock
 		}
-		return os.WriteFile(path, []byte(out), 0600)
+		return writeFileAtomic(path, []byte(out), 0600)
 	}
 
 	// Provider block exists. Search for [accountName] within [blockStart+1, blockEnd)
@@ -112,7 +123,7 @@ func SaveCloudAccount(path string, provider string, accountName string, fields m
 		newLines = append(newLines, lines[blockEnd:]...)
 	}
 
-	return os.WriteFile(path, []byte(strings.Join(newLines, "\n")), 0600)
+	return writeFileAtomic(path, []byte(strings.Join(newLines, "\n")), 0600)
 }
 
 // DeleteCloudAccount removes an account section from the given provider block.
@@ -124,6 +135,9 @@ func DeleteCloudAccount(path string, provider string, accountName string) error 
 	accountName = strings.TrimSpace(accountName)
 	if provider == "" || accountName == "" {
 		return fmt.Errorf("provider and account name are required")
+	}
+	if HasUnsafeConfigValue(provider) || HasUnsafeConfigValue(accountName) {
+		return fmt.Errorf("provider or account name contains unsupported characters")
 	}
 
 	data, err := os.ReadFile(path)
@@ -174,7 +188,7 @@ func DeleteCloudAccount(path string, provider string, accountName string) error 
 		var newLines []string
 		newLines = append(newLines, lines[:accStart]...)
 		newLines = append(newLines, lines[accEnd:]...)
-		return os.WriteFile(path, []byte(strings.Join(newLines, "\n")), 0600)
+		return writeFileAtomic(path, []byte(strings.Join(newLines, "\n")), 0600)
 	}
 
 	return nil

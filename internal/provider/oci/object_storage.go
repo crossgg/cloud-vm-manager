@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 )
@@ -260,6 +261,23 @@ func (o *OCIService) PutObject(bucketName, objectName, contentType string, data 
 	endpoint := o.objectStorageEndpoint("/n/"+url.PathEscape(ns)+"/b/"+url.PathEscape(bucketName)+"/o/"+escapeOCIObjectPath(objectName), nil)
 	_, _, _, err = o.doRawRequest(http.MethodPut, endpoint, contentType, data, false)
 	return err
+}
+
+func (o *OCIService) PutObjectFile(bucketName, objectName, contentType string, file *os.File, size int64, contentSHA256Base64 string) error {
+	bucketName = strings.TrimSpace(bucketName)
+	objectName = strings.TrimLeft(objectName, "/")
+	if bucketName == "" || objectName == "" {
+		return fmt.Errorf("缺少 Bucket 或对象名称")
+	}
+	ns, err := o.GetObjectStorageNamespace()
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(contentType) == "" {
+		contentType = "application/octet-stream"
+	}
+	endpoint := o.objectStorageEndpoint("/n/"+url.PathEscape(ns)+"/b/"+url.PathEscape(bucketName)+"/o/"+escapeOCIObjectPath(objectName), nil)
+	return o.doRawFileRequest(http.MethodPut, endpoint, contentType, file, size, contentSHA256Base64)
 }
 
 func (o *OCIService) GetObject(bucketName, objectName string) (string, []byte, error) {

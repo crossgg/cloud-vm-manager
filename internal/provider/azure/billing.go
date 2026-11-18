@@ -6,6 +6,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -217,7 +218,7 @@ func (az *AzureService) getCostAndCreditOverviewAt(creditCfg config.AzureCreditM
 }
 
 func (az *AzureService) populateSubscriptionMeta(overview *AzureCostOverview) {
-	url := fmt.Sprintf("https://management.azure.com/subscriptions/%s?api-version=2022-12-01", az.Account.SubId)
+	url := fmt.Sprintf("https://management.azure.com/subscriptions/%s?api-version=2022-12-01", url.PathEscape(az.Account.SubId))
 	resp, err := az.requestWithRetry("GET", url, nil, 3)
 	if err != nil {
 		return
@@ -353,7 +354,7 @@ func (az *AzureService) queryCostManagement(payload map[string]interface{}) ([]c
 	}
 	endpoint := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/providers/Microsoft.CostManagement/query?api-version=2023-11-01",
-		az.Account.SubId,
+		url.PathEscape(az.Account.SubId),
 	)
 
 	var allCols []costColumn

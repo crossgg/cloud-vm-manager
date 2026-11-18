@@ -570,3 +570,7 @@ func HasUnsafeConfigValue(value string) bool {
 func hasUnsafeConfigValue(value string) bool {
 	return HasUnsafeConfigValue(value)
 }
+
+func HasUnsafeConfigLineValue(value string) bool {
+	return strings.ContainsAny(value, "\r\n\x00")
+}

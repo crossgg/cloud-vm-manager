@@ -2,13 +2,20 @@ package server
 
 import (
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
 	"github.com/crossgg/cloud-vm-manager/internal/config"
+	cryptoutil "github.com/crossgg/cloud-vm-manager/internal/crypto"
 	"github.com/gin-gonic/gin"
+)
+
+const (
+	accountSecretMask     = "********"
+	maxKeyFileUploadBytes = 64 << 10
 )
 
 func getAccountDetail(c *gin.Context) {
@@ -31,6 +38,7 @@ func getAccountDetail(c *gin.Context) {
 	fields := make(map[string]string)
 	group := ""
 
+	hasClientSecret := false
 	switch provider {
 	case "azure":
 		found := false
@@ -38,7 +46,12 @@ func getAccountDetail(c *gin.Context) {
 			if strings.EqualFold(acc.Name, accountName) {
 				fields["tenant_id"] = acc.TenantId
 				fields["client_id"] = acc.ClientId
-				fields["client_secret"] = acc.ClientSecret
+				if acc.ClientSecret != "" {
+					fields["client_secret"] = accountSecretMask
+					hasClientSecret = true
+				} else {
+					fields["client_secret"] = ""
+				}
 				fields["subscription_id"] = acc.SubId
 				fields["resource_group"] = acc.ResourceGroup
 				fields["location"] = acc.Location
@@ -50,7 +63,12 @@ func getAccountDetail(c *gin.Context) {
 		if !found && (accountName == "default" || accountName == "azure") && cfg.Azure.TenantId != "" {
 			fields["tenant_id"] = cfg.Azure.TenantId
 			fields["client_id"] = cfg.Azure.ClientId
-			fields["client_secret"] = cfg.Azure.ClientSecret
+			if cfg.Azure.ClientSecret != "" {
+				fields["client_secret"] = accountSecretMask
+				hasClientSecret = true
+			} else {
+				fields["client_secret"] = ""
+			}
 			fields["subscription_id"] = cfg.Azure.SubId
 			fields["resource_group"] = cfg.Azure.ResourceGroup
 			fields["location"] = cfg.Azure.Location
@@ -105,10 +123,11 @@ func getAccountDetail(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"provider": provider,
-		"account":  accountName,
-		"group":    group,
-		"fields":   fields,
+		"provider":          provider,
+		"account":           accountName,
+		"group":             group,
+		"fields":            fields,
+		"has_client_secret": hasClientSecret,
 	})
 }
 
@@ -136,6 +155,10 @@ func saveAccount(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "account name cannot be empty"})
 		return
 	}
+	if config.HasUnsafeConfigValue(account) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "account name contains unsupported characters"})
+		return
+	}
 
 	configPath := currentConfigPath()
 	if configPath == "" {
@@ -149,8 +172,37 @@ func saveAccount(c *gin.Context) {
 	if strings.TrimSpace(payload.Group) != "" {
 		payload.Fields["group"] = strings.TrimSpace(payload.Group)
 	}
+	for k, v := range payload.Fields {
+		if config.HasUnsafeConfigValue(k) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("field key %q contains unsupported characters", k)})
+			return
+		}
+		if config.HasUnsafeConfigLineValue(v) {
+			c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("field %q contains unsupported control characters", k)})
+			return
+		}
+	}
 
 	origAccount := strings.TrimSpace(payload.OriginalAccount)
+	if provider == "azure" {
+		secret := strings.TrimSpace(payload.Fields["client_secret"])
+		if secret == "" || secret == accountSecretMask || strings.Contains(secret, "***") {
+			if existingSecret := findExistingAzureSecret(origAccount, account); existingSecret != "" {
+				payload.Fields["client_secret"] = existingSecret
+			} else if secret == accountSecretMask {
+				payload.Fields["client_secret"] = ""
+			}
+		}
+	}
+	if (provider == "oci" || provider == "gcp") && strings.TrimSpace(payload.Fields["key_file"]) != "" {
+		validatedKeyPath, err := validateAccountKeyFilePath(payload.Fields["key_file"])
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		payload.Fields["key_file"] = validatedKeyPath
+	}
+
 	preserveMonitorFields(provider, origAccount, account, payload.Fields)
 	if origAccount != "" && origAccount != account {
 		_ = config.DeleteCloudAccount(configPath, provider, origAccount)
@@ -246,31 +298,56 @@ func preserveMonitorFields(provider, origAccount, account string, fields map[str
 }
 
 func uploadKeyFile(c *gin.Context) {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxKeyFileUploadBytes+4096)
 	file, err := c.FormFile("keyFile")
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "file field 'keyFile' is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "file field 'keyFile' is required or exceeds 64KB limit"})
+		return
+	}
+	if file.Size > maxKeyFileUploadBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "key file exceeds maximum allowed size of 64KB"})
 		return
 	}
 
-	filename := filepath.Base(file.Filename)
-	if filename == "" || filename == "." || filename == "/" || filename == "\\" {
+	rawName := strings.ReplaceAll(file.Filename, "\\", "/")
+	filename := filepath.Base(rawName)
+	if filename == "" || filename == "." || filename == ".." || filename == "/" || strings.HasPrefix(filename, ".") || config.HasUnsafeConfigValue(filename) || strings.Contains(filename, "\x00") {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid filename"})
 		return
 	}
 
-	// Determine destination directory
-	keysDir := "config/keys"
-	if fi, err := os.Stat("/app/config/keys"); err == nil && fi.IsDir() {
-		keysDir = "/app/config/keys"
-	} else {
-		_ = os.MkdirAll(keysDir, 0700)
+	src, err := file.Open()
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read uploaded file: " + err.Error()})
+		return
+	}
+	defer src.Close()
+
+	data, err := io.ReadAll(io.LimitReader(src, maxKeyFileUploadBytes+1))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "failed to read key file: " + err.Error()})
+		return
+	}
+	if len(data) > maxKeyFileUploadBytes {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "key file exceeds maximum allowed size of 64KB"})
+		return
+	}
+	if _, err := cryptoutil.ParseRSAPrivateKeyPEM(data, filename); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid RSA PEM private key: " + err.Error()})
+		return
+	}
+
+	keysDir := resolveKeysDir()
+	if err := os.MkdirAll(keysDir, 0700); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to prepare keys directory: " + err.Error()})
+		return
 	}
 
 	destPath := filepath.Join(keysDir, filename)
 	// Replace Windows backslash with forward slash for cross-platform config compatibility
 	cleanPath := filepath.ToSlash(destPath)
 
-	if err := c.SaveUploadedFile(file, destPath); err != nil {
+	if err := os.WriteFile(destPath, data, 0600); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to save key file: " + err.Error()})
 		return
 	}
@@ -281,4 +358,79 @@ func uploadKeyFile(c *gin.Context) {
 		"filename": filename,
 		"path":     cleanPath,
 	})
+}
+
+func resolveKeysDir() string {
+	if fi, err := os.Stat("/app/config/keys"); err == nil && fi.IsDir() {
+		return "/app/config/keys"
+	}
+	if cfgPath := currentConfigPath(); cfgPath != "" {
+		dir := filepath.Dir(cfgPath)
+		if dir != "" && dir != "." {
+			return filepath.Join(dir, "keys")
+		}
+	}
+	return filepath.Join("config", "keys")
+}
+
+func validateAccountKeyFilePath(rawPath string) (string, error) {
+	trimmed := strings.TrimSpace(rawPath)
+	if trimmed == "" {
+		return "", nil
+	}
+	if config.HasUnsafeConfigLineValue(trimmed) {
+		return "", fmt.Errorf("key_file contains unsupported control characters")
+	}
+
+	keysDir := resolveKeysDir()
+	absKeysDir, err := filepath.Abs(keysDir)
+	if err != nil {
+		return "", fmt.Errorf("resolve keys directory failed: %w", err)
+	}
+	if resolvedDir, err := filepath.EvalSymlinks(absKeysDir); err == nil {
+		absKeysDir = resolvedDir
+	}
+
+	candidate := trimmed
+	if !filepath.IsAbs(candidate) {
+		candidate = filepath.FromSlash(candidate)
+	}
+	absCandidate, err := filepath.Abs(candidate)
+	if err != nil {
+		return "", fmt.Errorf("invalid key_file path: %w", err)
+	}
+	if resolvedParent, err := filepath.EvalSymlinks(filepath.Dir(absCandidate)); err == nil {
+		absCandidate = filepath.Join(resolvedParent, filepath.Base(absCandidate))
+	}
+
+	rel, err := filepath.Rel(absKeysDir, absCandidate)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("key_file must be inside %s", filepath.ToSlash(keysDir))
+	}
+	return filepath.ToSlash(trimmed), nil
+}
+
+func findExistingAzureSecret(origAccount, account string) string {
+	lookupName := origAccount
+	if lookupName == "" {
+		lookupName = account
+	}
+	if lookupName == "" {
+		return ""
+	}
+	runtimeState.mu.RLock()
+	cfg := runtimeState.cfg
+	runtimeState.mu.RUnlock()
+	if cfg == nil {
+		return ""
+	}
+	for _, acc := range cfg.AzureAccounts {
+		if strings.EqualFold(acc.Name, lookupName) {
+			return acc.ClientSecret
+		}
+	}
+	if (lookupName == "default" || lookupName == "azure") && cfg.Azure.ClientSecret != "" {
+		return cfg.Azure.ClientSecret
+	}
+	return ""
 }
