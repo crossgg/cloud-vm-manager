@@ -14,110 +14,32 @@ import (
 
 var ociIPPollInterval = 1500 * time.Millisecond
 
-type OCIPublicIPInfo struct {
-	ID          string `json:"id"`
-	IPAddress   string `json:"ipAddress"`
-	Lifetime    string `json:"lifetime"`
-	DisplayName string `json:"displayName,omitempty"`
-}
+type OCIPublicIPInfo = provider.PublicIPInfo
+type OCIPrivateIPInfo = provider.PrivateIPInfo
+type OCIIPv6Info = provider.IPv6Info
+type OCISubnetIPv6Status = provider.SubnetIPv6Status
+type OCIEnableIPv6Request = provider.EnableIPv6Request
+type OCIVNICIPInfo = provider.VNICIPInfo
+type OCIReservedPublicIP = provider.ReservedPublicIP
+type OCIDNSBindingSummary = provider.DNSBindingSummary
+type OCIIPManagementInfo = provider.IPManagementInfo
+type OCIAttachIPv4Request = provider.AttachIPv4Request
+type OCIAttachIPv6Request = provider.AttachIPv6Request
+type OCIChangeIPv6Result = provider.ChangeIPv6Result
 
-type OCIPrivateIPInfo struct {
-	ID            string           `json:"id"`
-	IPAddress     string           `json:"ipAddress"`
-	IsPrimary     bool             `json:"isPrimary"`
-	HostnameLabel string           `json:"hostnameLabel,omitempty"`
-	PublicIP      *OCIPublicIPInfo `json:"publicIp,omitempty"`
-}
-
-type OCIIPv6Info struct {
-	ID               string `json:"id"`
-	IPAddress        string `json:"ipAddress"`
-	CIDRPrefixLength int    `json:"cidrPrefixLength"`
-	SubnetID         string `json:"subnetId,omitempty"`
-	VNICID           string `json:"vnicId,omitempty"`
-	CanChange        bool   `json:"canChange"`
-}
-
-type OCISubnetIPv6Status struct {
-	VCNHasIPv6               bool     `json:"vcnHasIpv6"`
-	VCNIPv6CIDRs             []string `json:"vcnIpv6Cidrs"`
-	SubnetHasIPv6            bool     `json:"subnetHasIpv6"`
-	SuggestedHex             string   `json:"suggestedHex"`
-	UsedHexes                []string `json:"usedHexes"`
-	RouteHasIPv6Default      bool     `json:"routeHasIpv6Default"`
-	HasInternetGateway       bool     `json:"hasInternetGateway"`
-	SecurityListHasIPv6Egress bool    `json:"securityListHasIpv6Egress"`
-}
-
-type OCIEnableIPv6Request struct {
-	VNICID                string `json:"vnicId"`
-	HexByte               string `json:"hexByte"`
-	AddDefaultRoute       bool   `json:"addDefaultRoute"`
-	AddSecurityListEgress bool   `json:"addSecurityListEgress"`
-}
-
-type OCIVNICIPInfo struct {
-	ID                    string               `json:"id"`
-	DisplayName           string               `json:"displayName"`
-	IsPrimary             bool                 `json:"isPrimary"`
-	LifecycleState        string               `json:"lifecycleState"`
-	MACAddress            string               `json:"macAddress,omitempty"`
-	SubnetID              string               `json:"subnetId,omitempty"`
-	SubnetName            string               `json:"subnetName,omitempty"`
-	VCNID                 string               `json:"vcnId,omitempty"`
-	IPv4CIDR              string               `json:"ipv4Cidr,omitempty"`
-	IPv6CIDRBlocks        []string             `json:"ipv6CidrBlocks"`
-	IPv6Setup             *OCISubnetIPv6Status `json:"ipv6Setup,omitempty"`
-	ProhibitPublicIPOnNIC bool                 `json:"prohibitPublicIpOnVnic"`
-	PrivateIPs            []OCIPrivateIPInfo   `json:"privateIps"`
-	IPv6s                 []OCIIPv6Info        `json:"ipv6s"`
-}
-
-type OCIReservedPublicIP struct {
-	ID          string `json:"id"`
-	IPAddress   string `json:"ipAddress"`
-	DisplayName string `json:"displayName,omitempty"`
-	PrivateIPID string `json:"privateIpId,omitempty"`
-}
-
-type OCIDNSBindingSummary struct {
-	HasAny  bool `json:"hasAny"`
-	HasA    bool `json:"hasA"`
-	HasAAAA bool `json:"hasAAAA"`
-}
-
-type OCIIPManagementInfo struct {
-	InstanceID   string                `json:"instanceId"`
-	InstanceName string                `json:"instanceName"`
-	VNICs        []OCIVNICIPInfo       `json:"vnics"`
-	ReservedIPs  []OCIReservedPublicIP `json:"reservedIps"`
-	DNSBindings  OCIDNSBindingSummary  `json:"dnsBindings"`
-}
-
-type OCIAttachIPv4Request struct {
-	VNICID         string `json:"vnicId"`
-	PrivateIPID    string `json:"privateIpId"`
-	Mode           string `json:"mode"` // "ephemeral_public" | "secondary_private"
-	IPAddress      string `json:"ipAddress,omitempty"`
-	HostnameLabel  string `json:"hostnameLabel,omitempty"`
-	AssignPublicIP bool   `json:"assignPublicIp"`
-}
-
-type OCIAttachIPv6Request struct {
-	VNICID           string `json:"vnicId"`
-	IPv6SubnetCIDR   string `json:"ipv6SubnetCidr"`
-	CIDRPrefixLength int    `json:"cidrPrefixLength"`
-	AssignMode       string `json:"assignMode"` // "auto" | "manual"
-	IPAddress        string `json:"ipAddress,omitempty"`
-}
-
-type OCIChangeIPv6Result struct {
-	Success      bool         `json:"success"`
-	Message      string       `json:"message"`
-	OldIPAddress string       `json:"oldIpAddress,omitempty"`
-	NewIPAddress string       `json:"newIpAddress,omitempty"`
-	IPv6         *OCIIPv6Info `json:"ipv6,omitempty"`
-	Logs         []string     `json:"logs,omitempty"`
+func ociIPCapabilities() provider.IPCapabilities {
+	return provider.IPCapabilities{
+		CanAddSecondaryPrivateIPv4: true,
+		CanAttachReservedIPv4:      true,
+		CanCreateReservedIPv4:      true,
+		CanDetachPublicIPv4:        true,
+		CanAttachIPv6:              true,
+		CanChangeIPv6:              true,
+		CanDeleteIPv6:              true,
+		CanEnableSubnetIPv6:        true,
+		IPv6PrefixConfigurable:     true,
+		HasIdlePublicIPFeeWarning:  false,
+	}
 }
 
 func (o *OCIService) GetIPManagement(instanceID string) (*OCIIPManagementInfo, error) {
@@ -142,8 +64,10 @@ func (o *OCIService) GetIPManagement(instanceID string) (*OCIIPManagementInfo, e
 	}
 
 	return &OCIIPManagementInfo{
+		Provider:     "oci",
 		InstanceID:   instanceID,
 		InstanceName: valueOrDefault(stringValue(rawInstance["displayName"]), instanceID),
+		Capabilities: ociIPCapabilities(),
 		VNICs:        vnics,
 		ReservedIPs:  reservedIPs,
 	}, nil
@@ -155,6 +79,7 @@ func (o *OCIService) inspectVNICIPv6Status(vnic *OCIVNICIPInfo) *OCISubnetIPv6St
 		VCNIPv6CIDRs:  []string{},
 		UsedHexes:     []string{},
 		SuggestedHex:  "7E",
+		CanEnable:     true,
 	}
 	if vnic.SubnetID == "" {
 		return status
@@ -783,6 +708,16 @@ func (o *OCIService) AttachReservedIPv4(instanceID, privateIPID, reservedPublicI
 	ipAddr := stringValue(updated["ipAddress"])
 	return ipAddr, []string{fmt.Sprintf("已将保留 IP %s 绑定到私有 IP %s", valueOrDefault(ipAddr, reservedPublicIPID), priv.IPAddress)}, nil
 }
+
+func (o *OCIService) DeleteIPv4Managed(instanceID string, req provider.DeleteIPv4Request) ([]string, error) {
+	return o.DeleteIPv4(instanceID, req.PrivateIPID, req.PublicIPID, req.DeletePrivateIP)
+}
+
+func (o *OCIService) AttachReservedIPv4Managed(instanceID string, req provider.AttachReservedIPv4Request) (string, []string, error) {
+	return o.AttachReservedIPv4(instanceID, req.PrivateIPID, req.ReservedPublicIPID, req.CreateNew, req.DisplayName)
+}
+
+var _ provider.IPManager = (*OCIService)(nil)
 
 func (o *OCIService) AttachIPv6(instanceID string, req OCIAttachIPv6Request) (*OCIIPv6Info, error) {
 	vnics, err := o.instanceVNICIPInfos(instanceID)

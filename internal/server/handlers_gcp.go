@@ -112,3 +112,76 @@ func deleteGCPFirewall(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+func getGCPCreateOptions(c *gin.Context) {
+	gcpSvc, ok := getGCPService(c)
+	if !ok {
+		return
+	}
+	zone := c.Query("zone")
+	opts, err := gcpSvc.GetCreateOptions(zone)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, opts)
+}
+
+func launchGCPInstance(c *gin.Context) {
+	gcpSvc, ok := getGCPService(c)
+	if !ok {
+		return
+	}
+	var req gcp.GCPLaunchInstanceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	vm, logs, err := gcpSvc.LaunchInstance(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "logs": logs})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"vm":      vm,
+		"logs":    logs,
+	})
+}
+
+func scanGCPResources(c *gin.Context) {
+	gcpSvc, ok := getGCPService(c)
+	if !ok {
+		return
+	}
+	res, err := gcpSvc.ScanResources()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func cleanupGCPResources(c *gin.Context) {
+	gcpSvc, ok := getGCPService(c)
+	if !ok {
+		return
+	}
+	var payload struct {
+		ResourceIDs []string `json:"resourceIds"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(payload.ResourceIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择一项要清理的资源"})
+		return
+	}
+	deleted, errs := gcpSvc.CleanupResources(payload.ResourceIDs)
+	c.JSON(http.StatusOK, gin.H{
+		"success": len(errs) == 0,
+		"deleted": deleted,
+		"errors":  errs,
+	})
+}

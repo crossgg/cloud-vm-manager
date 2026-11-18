@@ -101,13 +101,16 @@ function cacheElements() {
     azureNsgTabOutbound: document.getElementById('azure-nsg-tab-outbound'),
     azureNsgAddRuleBtn: document.getElementById('azure-nsg-add-rule-btn'),
     azureNsgAddForm: document.getElementById('azure-nsg-add-form'),
+    azureNsgFormTitle: document.getElementById('azure-nsg-form-title'),
     azureNsgRulesContainer: document.getElementById('azure-nsg-rules-container'),
     azureNsgModalDone: document.getElementById('azure-nsg-modal-done'),
+    azRuleEditMode: document.getElementById('az-rule-edit-mode'),
     azRuleName: document.getElementById('az-rule-name'),
     azRulePriority: document.getElementById('az-rule-priority'),
     azRuleAccess: document.getElementById('az-rule-access'),
     azRuleProtocol: document.getElementById('az-rule-protocol'),
     azRuleSourceIp: document.getElementById('az-rule-source-ip'),
+    azRuleDestIp: document.getElementById('az-rule-dest-ip'),
     azRuleDestPort: document.getElementById('az-rule-dest-port'),
     azRuleDesc: document.getElementById('az-rule-desc'),
     azRuleCancelBtn: document.getElementById('az-rule-cancel-btn'),
@@ -704,6 +707,9 @@ async function loadAccount(account) {
   });
   updateOCIWorkspaceVisibility();
   updateAzureWorkspaceVisibility();
+  if (typeof updateGCPWorkspaceVisibility === 'function') {
+    updateGCPWorkspaceVisibility();
+  }
   await fetchVMs();
 }
 
@@ -777,6 +783,7 @@ function renderVMCard(vm) {
   const ipv6Badge = ipv6List.length > 1 ? ` (+${ipv6List.length - 1})` : '';
   const dnsEnabled = Boolean(vm.dnsEnabled);
   const isOCI = provider === 'oci';
+  const supportsIPManage = isOCI || provider === 'azure' || provider === 'gcp';
 
   return `
     <article class="vm-card"
@@ -800,11 +807,11 @@ function renderVMCard(vm) {
         <div class="info-item"><dt>公网 IPv4</dt><dd class="mono">${escapeHtml(publicIP)}</dd></div>
         <div class="info-item"><dt>公网 IP 名称</dt><dd>${escapeHtml(publicIPName)}</dd></div>
         <div class="info-item"><dt>内网 IP</dt><dd class="mono">${escapeHtml(vm.privateIP || '未分配')}</dd></div>
-        ${isOCI || ipv6Text !== '未分配' ? `<div class="info-item"><dt>IPv6</dt><dd class="mono">${escapeHtml(ipv6Text + ipv6Badge)}</dd></div>` : ''}
+        ${supportsIPManage || ipv6Text !== '未分配' ? `<div class="info-item"><dt>IPv6</dt><dd class="mono">${escapeHtml(ipv6Text + ipv6Badge)}</dd></div>` : ''}
         <div class="info-item"><dt>资源组 / 项目 / 区间</dt><dd>${escapeHtml(vm.resourceGroup || '-')}</dd></div>
       </dl>
 
-      ${isOCI ? '' : `
+      ${supportsIPManage ? '' : `
       <div class="vm-options">
         <label class="dns-toggle ${dnsEnabled ? '' : 'disabled'}">
           <input type="checkbox" class="change-ip-dns-toggle" ${dnsEnabled ? '' : 'disabled'}>
@@ -817,7 +824,7 @@ function renderVMCard(vm) {
         <button class="action-btn start" type="button" data-action="start" ${status === 'VM running' ? 'disabled' : ''}>开机</button>
         <button class="action-btn stop" type="button" data-action="stop" ${status !== 'VM running' ? 'disabled' : ''}>关机</button>
         <button class="action-btn restart" type="button" data-action="restart">重启</button>
-        ${isOCI
+        ${supportsIPManage
           ? '<button class="action-btn change-ip" type="button" data-action="ip-manage">IP 管理</button>'
           : '<button class="action-btn change-ip" type="button" data-action="change-ip">换 IP</button>'
         }
@@ -4950,10 +4957,16 @@ function renderAzureNSGRulesList() {
         <td style="text-align: right;">
           ${isDefault 
             ? '<span style="color: var(--muted); font-size: 12px;" title="系统默认规则不可修改"><i class="bi bi-lock"></i> 只读</span>'
-            : `<button class="ghost-btn azure-rule-delete-btn" type="button" data-name="${escapeAttr(rule.name)}" style="color: var(--red);" title="删除规则">
-                 <i class="bi bi-trash"></i>
-                 <span>删除</span>
-               </button>`
+            : `<div class="fw-actions-cell" style="justify-content: flex-end;">
+                 <button class="ghost-btn azure-rule-edit-btn" type="button" data-name="${escapeAttr(rule.name)}" title="编辑规则">
+                   <i class="bi bi-pencil"></i>
+                   <span>编辑</span>
+                 </button>
+                 <button class="ghost-btn azure-rule-delete-btn" type="button" data-name="${escapeAttr(rule.name)}" style="color: var(--red);" title="删除规则">
+                   <i class="bi bi-trash"></i>
+                   <span>删除</span>
+                 </button>
+               </div>`
           }
         </td>
       </tr>
@@ -4984,8 +4997,12 @@ function renderAzureNSGRulesList() {
 function toggleAzureNSGAddForm() {
   if (!els.azureNsgAddForm) return;
   const isHidden = els.azureNsgAddForm.style.display === 'none' || !els.azureNsgAddForm.style.display;
-  if (isHidden) {
+  const isEditing = els.azRuleEditMode?.value === 'edit';
+  if (isHidden || isEditing) {
     els.azureNsgAddForm.style.display = 'block';
+    if (els.azRuleEditMode) els.azRuleEditMode.value = '';
+    if (els.azureNsgFormTitle) els.azureNsgFormTitle.textContent = '新建安全规则';
+    delete els.azureNsgAddForm.dataset.sourcePortRange;
     // Calculate smart next priority
     const isMatchDir = (r) => (r.direction || '').toLowerCase() === azureNSGDirection.toLowerCase();
     const customRules = (currentAzureNSG?.securityRules || []).filter(isMatchDir);
@@ -4995,9 +5012,13 @@ function toggleAzureNSGAddForm() {
       nextPriority = Math.min(4090, maxP + 10);
     }
     if (els.azRulePriority) els.azRulePriority.value = nextPriority;
-    if (els.azRuleName) els.azRuleName.value = '';
+    if (els.azRuleName) {
+      els.azRuleName.value = '';
+      els.azRuleName.disabled = false;
+    }
     if (els.azRuleDestPort) els.azRuleDestPort.value = '80';
     if (els.azRuleSourceIp) els.azRuleSourceIp.value = '*';
+    if (els.azRuleDestIp) els.azRuleDestIp.value = '*';
     if (els.azRuleAccess) els.azRuleAccess.value = 'Allow';
     if (els.azRuleProtocol) els.azRuleProtocol.value = 'Tcp';
     if (els.azRuleDesc) els.azRuleDesc.value = '';
@@ -5010,9 +5031,49 @@ function toggleAzureNSGAddForm() {
   }
 }
 
+function openAzureNSGEditForm(ruleName) {
+  if (!els.azureNsgAddForm || !currentAzureNSG) return;
+  const isMatchDir = (r) => (r.direction || '').toLowerCase() === azureNSGDirection.toLowerCase();
+  const rule = (currentAzureNSG.securityRules || []).find(r => isMatchDir(r) && r.name === ruleName);
+  if (!rule) return;
+
+  els.azureNsgAddForm.style.display = 'block';
+  if (els.azRuleEditMode) els.azRuleEditMode.value = 'edit';
+  if (els.azureNsgFormTitle) els.azureNsgFormTitle.textContent = `编辑安全规则 - ${rule.name}`;
+  els.azureNsgAddForm.dataset.sourcePortRange = rule.sourcePortRange || '*';
+
+  if (els.azRuleName) {
+    els.azRuleName.value = rule.name || '';
+    els.azRuleName.disabled = true;
+  }
+  if (els.azRulePriority) els.azRulePriority.value = rule.priority ?? 1000;
+  if (els.azRuleAccess) {
+    els.azRuleAccess.value = (rule.access || '').toLowerCase() === 'deny' ? 'Deny' : 'Allow';
+  }
+  if (els.azRuleProtocol) {
+    const pLower = (rule.protocol || '*').toLowerCase();
+    if (pLower === 'tcp') els.azRuleProtocol.value = 'Tcp';
+    else if (pLower === 'udp') els.azRuleProtocol.value = 'Udp';
+    else if (pLower === 'icmp') els.azRuleProtocol.value = 'Icmp';
+    else els.azRuleProtocol.value = '*';
+  }
+  if (els.azRuleSourceIp) els.azRuleSourceIp.value = rule.sourceAddressPrefix || '*';
+  if (els.azRuleDestIp) els.azRuleDestIp.value = rule.destinationAddressPrefix || '*';
+  if (els.azRuleDestPort) els.azRuleDestPort.value = rule.destinationPortRange || '*';
+  if (els.azRuleDesc) els.azRuleDesc.value = rule.description || '';
+  if (els.azureNsgFormMsg) {
+    els.azureNsgFormMsg.textContent = '';
+    els.azureNsgFormMsg.className = 'form-message';
+  }
+  els.azureNsgAddForm.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
 function hideAzureNSGAddForm() {
   if (els.azureNsgAddForm) {
     els.azureNsgAddForm.style.display = 'none';
+    if (els.azRuleEditMode) els.azRuleEditMode.value = '';
+    if (els.azRuleName) els.azRuleName.disabled = false;
+    delete els.azureNsgAddForm.dataset.sourcePortRange;
   }
 }
 
@@ -5024,7 +5085,7 @@ function handleAzureQuickPortClick(event) {
 
   if (els.azRuleDestPort) els.azRuleDestPort.value = port;
   if (els.azRuleProtocol) els.azRuleProtocol.value = (port === '*' ? '*' : 'Tcp');
-  if (els.azRuleName && (!els.azRuleName.value || els.azRuleName.value.startsWith('Allow-'))) {
+  if (els.azRuleName && !els.azRuleName.disabled && (!els.azRuleName.value || els.azRuleName.value.startsWith('Allow-'))) {
     const cleanPort = port.replace(/[,*]/g, '_');
     els.azRuleName.value = `Allow-${cleanPort}`;
   }
@@ -5036,11 +5097,14 @@ async function handleAzureNSGAddSubmit(event) {
   const nsg = currentAzureNSG;
   if (!account || !nsg) return;
 
+  const isEdit = els.azRuleEditMode?.value === 'edit';
   const name = els.azRuleName.value.trim();
   const priority = parseInt(els.azRulePriority.value, 10) || 1000;
   const access = els.azRuleAccess.value;
   const protocol = els.azRuleProtocol.value;
   const sourceAddressPrefix = els.azRuleSourceIp.value.trim() || '*';
+  const destinationAddressPrefix = els.azRuleDestIp?.value?.trim() || '*';
+  const sourcePortRange = els.azureNsgAddForm?.dataset?.sourcePortRange || '*';
   const destinationPortRange = els.azRuleDestPort.value.trim();
   const description = els.azRuleDesc.value.trim();
 
@@ -5060,8 +5124,8 @@ async function handleAzureNSGAddSubmit(event) {
     access,
     protocol,
     sourceAddressPrefix,
-    sourcePortRange: '*',
-    destinationAddressPrefix: '*',
+    sourcePortRange,
+    destinationAddressPrefix,
     destinationPortRange,
     description
   };
@@ -5077,7 +5141,7 @@ async function handleAzureNSGAddSubmit(event) {
       body: payload
     });
 
-    addLog(`Azure 安全组 ${nsg.name} 规则 ${name} 添加成功。`, 'success');
+    addLog(`Azure 安全组 ${nsg.name} 规则 ${name} ${isEdit ? '更新' : '添加'}成功。`, 'success');
     hideAzureNSGAddForm();
 
     // Re-fetch NSGs and refresh modal
@@ -5090,14 +5154,20 @@ async function handleAzureNSGAddSubmit(event) {
       renderAzureNSGRulesList();
     }
   } catch (error) {
-    showFormMessage(els.azureNsgFormMsg, `添加规则失败: ${error.message}`, 'error');
-    addLog(`添加 Azure 安全规则失败: ${error.message}`, 'error');
+    showFormMessage(els.azureNsgFormMsg, `${isEdit ? '更新' : '添加'}规则失败: ${error.message}`, 'error');
+    addLog(`${isEdit ? '更新' : '添加'} Azure 安全规则失败: ${error.message}`, 'error');
   } finally {
     if (submitBtn) submitBtn.disabled = false;
   }
 }
 
 function handleAzureRulesContainerClick(event) {
+  const editBtn = event.target.closest('.azure-rule-edit-btn');
+  if (editBtn) {
+    const ruleName = editBtn.dataset.name;
+    if (ruleName) openAzureNSGEditForm(ruleName);
+    return;
+  }
   const delBtn = event.target.closest('.azure-rule-delete-btn');
   if (!delBtn) return;
   const ruleName = delBtn.dataset.name;
@@ -5136,838 +5206,7 @@ async function deleteAzureNSGRule(ruleName) {
 }
 
 
-// ==================== OCI Centralized IP Management ====================
-
-let ociIPModalVM = null;
-let ociIPInfo = null;
-let ociIPSelectedDNSIPv6 = '';
-let ociIPSubformMode = '';
-
-function openOCIIPModal(vm) {
-  ociIPModalVM = vm;
-  ociIPInfo = null;
-  ociIPSelectedDNSIPv6 = '';
-  ociIPSubformMode = '';
-  document.getElementById('oci-ip-modal-title').textContent = `${vm.name || vm.id} - IP管理`;
-  document.getElementById('oci-ip-modal-body').innerHTML = '<div class="empty-state compact">加载中...</div>';
-  const subform = document.getElementById('oci-ip-subform');
-  if (subform) {
-    subform.hidden = true;
-    subform.innerHTML = '';
-  }
-  const msgEl = document.getElementById('oci-ip-modal-message');
-  if (msgEl) {
-    msgEl.textContent = '';
-    msgEl.className = 'form-message';
-  }
-  document.getElementById('oci-ip-modal').hidden = false;
-  loadOCIIPInfo();
-}
-
-function closeOCIIPModal() {
-  document.getElementById('oci-ip-modal').hidden = true;
-  ociIPModalVM = null;
-  ociIPInfo = null;
-  ociIPSubformMode = '';
-}
-
-async function loadOCIIPInfo() {
-  if (!ociIPModalVM) return;
-  const vm = ociIPModalVM;
-  const body = document.getElementById('oci-ip-modal-body');
-
-  try {
-    const data = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips`);
-    if (!ociIPModalVM || ociIPModalVM.id !== vm.id) return;
-    ociIPInfo = data;
-    renderOCIIPModal(data);
-  } catch (err) {
-    if (body) {
-      body.innerHTML = `<div class="empty-state compact error">加载 IP 信息失败：${escapeHtml(err.message)}</div>`;
-    }
-  }
-}
-
-function renderOCIIPModal(info) {
-  const body = document.getElementById('oci-ip-modal-body');
-  if (!body) return;
-  const vnics = Array.isArray(info?.vnics) ? info.vnics : [];
-  if (vnics.length === 0) {
-    body.innerHTML = '<div class="empty-state compact">未找到已附加的 VNIC。</div>';
-    return;
-  }
-
-  // Ensure default selected /128 IPv6 stays valid if present
-  const allChangeableV6 = [];
-  vnics.forEach(v => {
-    (v.ipv6s || []).forEach(ip6 => {
-      if (ip6.canChange && ip6.ipAddress) allChangeableV6.push(ip6.ipAddress);
-    });
-  });
-  if (!allChangeableV6.includes(ociIPSelectedDNSIPv6)) {
-    ociIPSelectedDNSIPv6 = allChangeableV6[0] || '';
-  }
-
-  const dnsBindings = info?.dnsBindings || {};
-  const hasAnyDNS = Boolean(dnsBindings.hasAny);
-  const dnsCheckbox = document.getElementById('oci-ip-update-dns-checkbox');
-  const dnsManualBtn = document.getElementById('oci-ip-manual-dns-btn');
-  const dnsHint = document.getElementById('oci-ip-dns-hint');
-
-  if (dnsCheckbox) {
-    dnsCheckbox.disabled = !hasAnyDNS;
-    if (!hasAnyDNS) dnsCheckbox.checked = false;
-  }
-  if (dnsManualBtn) {
-    dnsManualBtn.disabled = !hasAnyDNS;
-  }
-  if (dnsHint) {
-    if (!hasAnyDNS) {
-      dnsHint.textContent = '未绑定 DNS，请先在实例卡片点击「DNS 绑定」';
-    } else {
-      const types = [];
-      if (dnsBindings.hasA) types.push('A');
-      if (dnsBindings.hasAAAA) types.push('AAAA');
-      dnsHint.textContent = `已绑定 DNS：${types.join(' / ') || '其他'}`;
-    }
-  }
-
-  const hasAnyIPv6Subnet = vnics.some(v => Array.isArray(v.ipv6CidrBlocks) && v.ipv6CidrBlocks.length > 0);
-  const needsIPv6Setup = vnics.some(v => {
-    const hasSub = Array.isArray(v.ipv6CidrBlocks) && v.ipv6CidrBlocks.length > 0;
-    const hasRt = v.ipv6Setup ? Boolean(v.ipv6Setup.routeHasIpv6Default) : true;
-    return !hasSub || !hasRt;
-  });
-  const attachV6Btn = document.getElementById('oci-ip-attach-v6-btn');
-  if (attachV6Btn) {
-    attachV6Btn.disabled = false;
-    attachV6Btn.classList.toggle('oci-btn-muted', !hasAnyIPv6Subnet);
-    attachV6Btn.textContent = '附加 IPv6';
-    attachV6Btn.title = hasAnyIPv6Subnet
-      ? '为 VNIC 分配新的 IPv6 地址或前缀'
-      : '当前子网未开启 IPv6，点击将提示并打开「开启子网 IPv6」向导';
-  }
-  const enableV6Btn = document.getElementById('oci-ip-enable-v6-btn');
-  if (enableV6Btn) {
-    enableV6Btn.hidden = !needsIPv6Setup;
-    enableV6Btn.textContent = hasAnyIPv6Subnet ? '补全子网 IPv6' : '开启子网 IPv6';
-    enableV6Btn.title = '查看 VCN / 子网 / 路由表 / 安全列表 IPv6 就绪状态并一键开启';
-  }
-
-  body.innerHTML = vnics.map(vnic => {
-    const privRows = (vnic.privateIps || []).map(priv => {
-      const pub = priv.publicIp;
-      const isReserved = pub && String(pub.lifetime || '').toUpperCase() === 'RESERVED';
-      return `
-        <div class="oci-ip-row">
-          <span class="oci-ip-addr">${escapeHtml(priv.ipAddress)}</span>
-          ${priv.isPrimary ? '<span class="oci-ip-badge primary">主私网 IP</span>' : '<span class="oci-ip-badge ephemeral">辅助私网 IP</span>'}
-          ${pub ? `
-            <span class="oci-ip-addr oci-ip-pub">${escapeHtml(pub.ipAddress)}</span>
-            <span class="oci-ip-badge ${isReserved ? 'reserved' : 'ephemeral'}">${isReserved ? '保留 IP' : '临时 IP'}</span>
-            ${isReserved ? '' : `<button class="secondary-btn oci-ip-btn-sm oci-ip-change-v4-btn" type="button" data-private-id="${escapeAttr(priv.id)}">换IP</button>`}
-            <button class="ghost-btn oci-ip-btn-circle oci-ip-btn-danger oci-ip-del-v4-btn" type="button"
-              data-private-id="${escapeAttr(priv.id)}"
-              data-public-id="${escapeAttr(pub.id)}"
-              data-is-primary="${priv.isPrimary ? 'true' : 'false'}"
-              data-is-reserved="${isReserved ? 'true' : 'false'}"
-              title="${isReserved ? '解绑保留 IP' : '删除公网 IP'}">×</button>
-          ` : `
-            <span class="oci-ip-badge ephemeral">无公网 IP</span>
-            ${priv.isPrimary ? '' : `<button class="ghost-btn oci-ip-btn-circle oci-ip-btn-danger oci-ip-del-priv-btn" type="button" data-private-id="${escapeAttr(priv.id)}" title="删除辅助私网 IP">×</button>`}
-          `}
-        </div>
-      `;
-    }).join('');
-
-    const ipv6Rows = (vnic.ipv6s || []).map(ip6 => {
-      const displayAddr = ip6.cidrPrefixLength && ip6.cidrPrefixLength !== 128
-        ? `${ip6.ipAddress}/${ip6.cidrPrefixLength}`
-        : ip6.ipAddress;
-      const isCheckedDNS = ip6.canChange && ip6.ipAddress === ociIPSelectedDNSIPv6;
-      return `
-        <div class="oci-ip-row">
-          ${ip6.canChange && dnsBindings.hasAAAA ? `
-            <label class="oci-ip-dns-select" title="选定此 IPv6 用于手动更新 DNS (AAAA)">
-              <input type="radio" name="oci-dns-ipv6" value="${escapeAttr(ip6.ipAddress)}" ${isCheckedDNS ? 'checked' : ''}>
-            </label>
-          ` : ''}
-          <span class="oci-ip-addr">${escapeHtml(displayAddr)}</span>
-          ${ip6.cidrPrefixLength && ip6.cidrPrefixLength !== 128 ? `<span class="oci-ip-badge ephemeral">/${ip6.cidrPrefixLength} 前缀</span>` : ''}
-          ${ip6.canChange ? `<button class="secondary-btn oci-ip-btn-sm oci-ip-change-v6-btn" type="button" data-vnic-id="${escapeAttr(vnic.id)}" data-ipv6-id="${escapeAttr(ip6.id)}">换IP</button>` : ''}
-          <button class="ghost-btn oci-ip-btn-sm oci-ip-btn-danger oci-ip-del-v6-btn" type="button" data-ipv6-id="${escapeAttr(ip6.id)}" data-ip="${escapeAttr(displayAddr)}">删除IP</button>
-        </div>
-      `;
-    }).join('');
-
-    return `
-      <div class="oci-vnic-card">
-        <div class="oci-vnic-header">
-          <span class="oci-vnic-title">${escapeHtml(vnic.displayName || vnic.id)}</span>
-          ${vnic.isPrimary ? '<span class="oci-ip-badge primary">主 VNIC</span>' : ''}
-          <span class="oci-ip-badge attached">${vnic.lifecycleState === 'ATTACHED' ? '已附加' : escapeHtml(vnic.lifecycleState)}</span>
-        </div>
-        ${vnic.macAddress ? `<div class="oci-vnic-mac">MAC 地址: ${escapeHtml(vnic.macAddress)}</div>` : ''}
-        <div class="oci-ip-section-label">私网 IP:</div>
-        ${privRows || '<div class="field-hint">暂无私网 IP</div>'}
-        <div class="oci-ip-section-label">IPv6:</div>
-        ${ipv6Rows || `<div class="field-hint">${(vnic.ipv6CidrBlocks || []).length > 0 ? '暂无 IPv6 地址' : '当前子网未开启 IPv6'}</div>`}
-      </div>
-    `;
-  }).join('');
-}
-
-function setOCIIPModalMessage(text, isError = false, isSuccess = false) {
-  const msgEl = document.getElementById('oci-ip-modal-message');
-  if (!msgEl) return;
-  msgEl.textContent = text || '';
-  msgEl.className = 'form-message' + (isError ? ' error' : isSuccess ? ' success' : '');
-}
-
-function closeOCIIPSubform() {
-  const subform = document.getElementById('oci-ip-subform');
-  if (subform) {
-    subform.hidden = true;
-    subform.innerHTML = '';
-  }
-  ociIPSubformMode = '';
-}
-
-function openOCIIPSubform(mode) {
-  if (!ociIPInfo) return;
-  const subform = document.getElementById('oci-ip-subform');
-  if (!subform) return;
-
-  if (ociIPSubformMode === mode && !subform.hidden) {
-    closeOCIIPSubform();
-    return;
-  }
-
-  ociIPSubformMode = mode;
-  const vnics = ociIPInfo.vnics || [];
-
-  if (mode === 'ipv4') {
-    const privWithoutPub = [];
-    vnics.forEach(v => {
-      (v.privateIps || []).forEach(p => {
-        if (!p.publicIp) privWithoutPub.push({ vnic: v, priv: p });
-      });
-    });
-
-    subform.innerHTML = `
-      <div class="oci-ip-subform-title">
-        <span>附加 IPv4</span>
-        <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-subform-close">取消</button>
-      </div>
-      <div class="form-grid">
-        <label class="field compact">
-          <span>操作类型</span>
-          <select id="oci-v4-mode">
-            <option value="ephemeral_public" ${privWithoutPub.length === 0 ? 'disabled' : ''}>为已有私网 IP 分配临时公网 IP</option>
-            <option value="secondary_private" ${privWithoutPub.length === 0 ? 'selected' : ''}>新增辅助私网 IP</option>
-          </select>
-        </label>
-        <label class="field compact" id="oci-v4-priv-wrap">
-          <span>目标私网 IP</span>
-          <select id="oci-v4-priv-select">
-            ${privWithoutPub.length > 0
-              ? privWithoutPub.map(item => `<option value="${escapeAttr(item.priv.id)}" data-vnic-id="${escapeAttr(item.vnic.id)}">${escapeHtml(item.priv.ipAddress)} (${escapeHtml(item.vnic.displayName)})</option>`).join('')
-              : '<option value="">所有私网 IP 均已绑定公网 IP</option>'}
-          </select>
-        </label>
-        <label class="field compact" id="oci-v4-vnic-wrap" hidden>
-          <span>目标 VNIC</span>
-          <select id="oci-v4-vnic-select">
-            ${vnics.map(v => `<option value="${escapeAttr(v.id)}">${escapeHtml(v.displayName)} (${escapeHtml(v.ipv4Cidr || '')})</option>`).join('')}
-          </select>
-        </label>
-        <label class="field compact" id="oci-v4-ip-wrap" hidden>
-          <span>指定私网 IP（留空自动分配）</span>
-          <input id="oci-v4-custom-ip" type="text" placeholder="例如 10.0.0.182">
-        </label>
-      </div>
-      <label class="switch-row compact" id="oci-v4-assign-pub-wrap" style="margin-top: 8px;" hidden>
-        <input id="oci-v4-assign-pub" type="checkbox">
-        <span>同时分配临时公网 IP</span>
-      </label>
-      <div class="oci-ip-subform-actions">
-        <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-v4-submit">确认附加 IPv4</button>
-      </div>
-    `;
-    subform.hidden = false;
-    syncOCIIPv4SubformFields();
-    return;
-  }
-
-  if (mode === 'enable-ipv6') {
-    const defaultVnic = vnics.find(v => !Array.isArray(v.ipv6CidrBlocks) || v.ipv6CidrBlocks.length === 0) || vnics[0];
-    subform.innerHTML = buildOCIEnableIPv6SubformHTML(vnics, defaultVnic.id);
-    subform.hidden = false;
-    return;
-  }
-
-  if (mode === 'ipv6') {
-    const v6Vnics = vnics.filter(v => Array.isArray(v.ipv6CidrBlocks) && v.ipv6CidrBlocks.length > 0);
-    if (v6Vnics.length === 0) {
-      setOCIIPModalMessage('当前子网尚未开启 IPv6，无法直接附加 IPv6，已为您打开「开启子网 IPv6」向导。', true);
-      ociIPSubformMode = '';
-      openOCIIPSubform('enable-ipv6');
-      return;
-    }
-    const firstVnic = v6Vnics[0];
-
-    subform.innerHTML = `
-      <div class="oci-ip-subform-title">
-        <span>附加 IPv6</span>
-        <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-subform-close">取消</button>
-      </div>
-      <div class="form-grid">
-        <label class="field compact">
-          <span>目标 VNIC</span>
-          <select id="oci-v6-vnic-select">
-            ${v6Vnics.map(v => `<option value="${escapeAttr(v.id)}">${escapeHtml(v.displayName)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="field compact">
-          <span>子网前缀</span>
-          <select id="oci-v6-prefix-select">
-            ${(firstVnic.ipv6CidrBlocks || []).map(cidr => `<option value="${escapeAttr(cidr)}">${escapeHtml(cidr)}</option>`).join('')}
-          </select>
-        </label>
-        <label class="field compact">
-          <span>CIDR 前缀长度（80 - 128）</span>
-          <input id="oci-v6-prefix-len" type="number" min="80" max="128" value="128">
-        </label>
-        <label class="field compact">
-          <span>分配方式</span>
-          <select id="oci-v6-assign-mode">
-            <option value="auto" selected>自动从前缀分配 IPv6 地址</option>
-            <option value="manual">手动从前缀分配 IPv6 地址</option>
-          </select>
-        </label>
-      </div>
-      <label class="field compact" id="oci-v6-manual-wrap" style="margin-top: 8px;" hidden>
-        <span>手动指定 IPv6 地址</span>
-        <input id="oci-v6-manual-ip" type="text" placeholder="请输入所选子网前缀范围内的 IPv6 地址">
-      </label>
-      <div class="oci-ip-subform-actions">
-        <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-v6-submit">确认分配 IPv6</button>
-      </div>
-    `;
-    subform.hidden = false;
-    return;
-  }
-
-  if (mode === 'reserved') {
-    const privWithoutPub = [];
-    vnics.forEach(v => {
-      (v.privateIps || []).forEach(p => {
-        if (!p.publicIp) privWithoutPub.push({ vnic: v, priv: p });
-      });
-    });
-    const reservedList = ociIPInfo.reservedIps || [];
-
-    subform.innerHTML = `
-      <div class="oci-ip-subform-title">
-        <span>附加保留 IP</span>
-        <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-subform-close">取消</button>
-      </div>
-      <div class="form-grid">
-        <label class="field compact">
-          <span>目标私网 IP（需先无公网 IP）</span>
-          <select id="oci-res-priv-select">
-            ${privWithoutPub.length > 0
-              ? privWithoutPub.map(item => `<option value="${escapeAttr(item.priv.id)}">${escapeHtml(item.priv.ipAddress)} (${escapeHtml(item.vnic.displayName)})</option>`).join('')
-              : '<option value="">无可用的空余私网 IP（请先删除/解绑现有公网 IP）</option>'}
-          </select>
-        </label>
-        <label class="field compact">
-          <span>来源</span>
-          <select id="oci-res-mode">
-            <option value="existing" ${reservedList.length === 0 ? 'disabled' : ''}>选择已有未绑定的保留 IP</option>
-            <option value="new" ${reservedList.length === 0 ? 'selected' : ''}>新建并绑定保留 IP</option>
-          </select>
-        </label>
-        <label class="field compact" id="oci-res-existing-wrap" ${reservedList.length === 0 ? 'hidden' : ''}>
-          <span>选择保留 IP</span>
-          <select id="oci-res-id-select">
-            ${reservedList.map(r => `<option value="${escapeAttr(r.id)}">${escapeHtml(r.ipAddress)} (${escapeHtml(r.displayName || r.id)})</option>`).join('')}
-          </select>
-        </label>
-        <label class="field compact" id="oci-res-new-wrap" ${reservedList.length === 0 ? '' : 'hidden'}>
-          <span>新保留 IP 名称（可选）</span>
-          <input id="oci-res-new-name" type="text" placeholder="例如 reserved-ip">
-        </label>
-      </div>
-      <div class="oci-ip-subform-actions">
-        <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-res-submit" ${privWithoutPub.length === 0 ? 'disabled' : ''}>确认附加保留 IP</button>
-      </div>
-    `;
-    subform.hidden = false;
-  }
-}
-
-function syncOCIIPv4SubformFields() {
-  const mode = document.getElementById('oci-v4-mode')?.value || 'ephemeral_public';
-  const isSecondary = mode === 'secondary_private';
-  const privWrap = document.getElementById('oci-v4-priv-wrap');
-  const vnicWrap = document.getElementById('oci-v4-vnic-wrap');
-  const ipWrap = document.getElementById('oci-v4-ip-wrap');
-  const pubWrap = document.getElementById('oci-v4-assign-pub-wrap');
-  if (privWrap) privWrap.hidden = isSecondary;
-  if (vnicWrap) vnicWrap.hidden = !isSecondary;
-  if (ipWrap) ipWrap.hidden = !isSecondary;
-  if (pubWrap) pubWrap.hidden = !isSecondary;
-}
-
-async function submitOCIIPv4Attach() {
-  if (!ociIPModalVM) return;
-  const vm = ociIPModalVM;
-  const mode = document.getElementById('oci-v4-mode')?.value || 'ephemeral_public';
-  const updateDns = document.getElementById('oci-ip-update-dns-checkbox')?.checked === true;
-
-  const payload = { mode, updateDns };
-  if (mode === 'ephemeral_public') {
-    const privSelect = document.getElementById('oci-v4-priv-select');
-    const privId = privSelect?.value || '';
-    if (!privId) {
-      setOCIIPModalMessage('没有可分配公网 IP 的空余私网 IP。', true);
-      return;
-    }
-    payload.privateIpId = privId;
-    payload.vnicId = privSelect.selectedOptions?.[0]?.dataset?.vnicId || '';
-  } else {
-    payload.vnicId = document.getElementById('oci-v4-vnic-select')?.value || '';
-    payload.ipAddress = document.getElementById('oci-v4-custom-ip')?.value?.trim() || '';
-    payload.assignPublicIp = document.getElementById('oci-v4-assign-pub')?.checked === true;
-  }
-
-  setOCIIPModalMessage('正在附加 IPv4...', false);
-  try {
-    const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/attach-ipv4`, {
-      method: 'POST',
-      body: payload
-    });
-    if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-    setOCIIPModalMessage('IPv4 附加成功。', false, true);
-    closeOCIIPSubform();
-    await loadOCIIPInfo();
-    fetchVMs();
-  } catch (err) {
-    setOCIIPModalMessage(err.message, true);
-    addLog(`附加 IPv4 失败：${err.message}`, 'error');
-  }
-}
-
-async function submitOCIIPv6Attach() {
-  if (!ociIPModalVM) return;
-  const vm = ociIPModalVM;
-  const vnicId = document.getElementById('oci-v6-vnic-select')?.value || '';
-  const ipv6SubnetCidr = document.getElementById('oci-v6-prefix-select')?.value || '';
-  const cidrPrefixLength = Number(document.getElementById('oci-v6-prefix-len')?.value || 128);
-  const assignMode = document.getElementById('oci-v6-assign-mode')?.value || 'auto';
-  const ipAddress = document.getElementById('oci-v6-manual-ip')?.value?.trim() || '';
-  const updateDns = document.getElementById('oci-ip-update-dns-checkbox')?.checked === true;
-
-  if (!Number.isInteger(cidrPrefixLength) || cidrPrefixLength < 80 || cidrPrefixLength > 128) {
-    setOCIIPModalMessage('CIDR 前缀长度必须在 80 到 128 之间。', true);
-    return;
-  }
-  if (assignMode === 'manual' && !ipAddress) {
-    setOCIIPModalMessage('手动分配模式下请输入 IPv6 地址。', true);
-    return;
-  }
-
-  setOCIIPModalMessage('正在分配 IPv6...', false);
-  try {
-    const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/attach-ipv6`, {
-      method: 'POST',
-      body: { vnicId, ipv6SubnetCidr, cidrPrefixLength, assignMode, ipAddress, updateDns }
-    });
-    if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-    setOCIIPModalMessage('IPv6 分配成功。', false, true);
-    closeOCIIPSubform();
-    await loadOCIIPInfo();
-    fetchVMs();
-  } catch (err) {
-    setOCIIPModalMessage(err.message, true);
-    addLog(`分配 IPv6 失败：${err.message}`, 'error');
-  }
-}
-
-async function submitOCIReservedAttach() {
-  if (!ociIPModalVM) return;
-  const vm = ociIPModalVM;
-  const privateIpId = document.getElementById('oci-res-priv-select')?.value || '';
-  const mode = document.getElementById('oci-res-mode')?.value || 'existing';
-  const reservedPublicIpId = document.getElementById('oci-res-id-select')?.value || '';
-  const displayName = document.getElementById('oci-res-new-name')?.value?.trim() || '';
-  const updateDns = document.getElementById('oci-ip-update-dns-checkbox')?.checked === true;
-
-  if (!privateIpId) {
-    setOCIIPModalMessage('没有可用的空余私网 IP。', true);
-    return;
-  }
-
-  setOCIIPModalMessage('正在附加保留 IP...', false);
-  try {
-    const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/attach-reserved`, {
-      method: 'POST',
-      body: {
-        privateIpId,
-        reservedPublicIpId,
-        createNew: mode === 'new',
-        displayName,
-        updateDns
-      }
-    });
-    if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-    setOCIIPModalMessage('保留 IP 附加成功。', false, true);
-    closeOCIIPSubform();
-    await loadOCIIPInfo();
-    fetchVMs();
-  } catch (err) {
-    setOCIIPModalMessage(err.message, true);
-    addLog(`附加保留 IP 失败：${err.message}`, 'error');
-  }
-}
-
-async function handleOCIIPActionClick(event) {
-  if (!ociIPModalVM) return;
-  const vm = ociIPModalVM;
-  const updateDns = document.getElementById('oci-ip-update-dns-checkbox')?.checked === true;
-
-  const changeV4Btn = event.target.closest('.oci-ip-change-v4-btn');
-  if (changeV4Btn) {
-    const privateIpId = changeV4Btn.dataset.privateId;
-    if (!confirm('确认更换该私网 IP 绑定的临时公网 IPv4？')) return;
-    changeV4Btn.disabled = true;
-    setOCIIPModalMessage('正在更换公网 IPv4...', false);
-    try {
-      const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/change-ipv4`, {
-        method: 'POST',
-        body: { privateIpId, updateDns }
-      });
-      if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-      setOCIIPModalMessage(`公网 IPv4 更换成功：${res.newIpAddress || ''}`, false, true);
-      await loadOCIIPInfo();
-      fetchVMs();
-    } catch (err) {
-      setOCIIPModalMessage(err.message, true);
-      addLog(`更换 IPv4 失败：${err.message}`, 'error');
-    } finally {
-      changeV4Btn.disabled = false;
-    }
-    return;
-  }
-
-  const delV4Btn = event.target.closest('.oci-ip-del-v4-btn');
-  if (delV4Btn) {
-    const isReserved = delV4Btn.dataset.isReserved === 'true';
-    const isPrimary = delV4Btn.dataset.isPrimary === 'true';
-    const msg = isReserved
-      ? '确认解绑该保留公网 IP？（保留 IP 本身不会被销毁）'
-      : '确认删除该临时公网 IP？删除后该 IP 地址无法恢复。';
-    if (!confirm(msg)) return;
-    delV4Btn.disabled = true;
-    setOCIIPModalMessage('正在处理...', false);
-    try {
-      const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/delete-ipv4`, {
-        method: 'POST',
-        body: {
-          privateIpId: delV4Btn.dataset.privateId,
-          publicIpId: delV4Btn.dataset.publicId,
-          deletePrivateIp: !isPrimary && confirm('是否同时删除该辅助私网 IP？（点“取消”则仅移除公网 IP）')
-        }
-      });
-      if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-      setOCIIPModalMessage('操作完成。', false, true);
-      await loadOCIIPInfo();
-      fetchVMs();
-    } catch (err) {
-      setOCIIPModalMessage(err.message, true);
-      addLog(`移除 IPv4 失败：${err.message}`, 'error');
-    } finally {
-      delV4Btn.disabled = false;
-    }
-    return;
-  }
-
-  const delPrivBtn = event.target.closest('.oci-ip-del-priv-btn');
-  if (delPrivBtn) {
-    if (!confirm('确认删除该辅助私网 IP？')) return;
-    delPrivBtn.disabled = true;
-    setOCIIPModalMessage('正在删除辅助私网 IP...', false);
-    try {
-      const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/delete-ipv4`, {
-        method: 'POST',
-        body: {
-          privateIpId: delPrivBtn.dataset.privateId,
-          deletePrivateIp: true
-        }
-      });
-      if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-      setOCIIPModalMessage('辅助私网 IP 已删除。', false, true);
-      await loadOCIIPInfo();
-      fetchVMs();
-    } catch (err) {
-      setOCIIPModalMessage(err.message, true);
-      addLog(`删除辅助私网 IP 失败：${err.message}`, 'error');
-    } finally {
-      delPrivBtn.disabled = false;
-    }
-    return;
-  }
-
-  const changeV6Btn = event.target.closest('.oci-ip-change-v6-btn');
-  if (changeV6Btn) {
-    if (!confirm('IPv6 换 IP 将先删除旧 IPv6 地址，再自动重新分配新地址，确认继续？')) return;
-    changeV6Btn.disabled = true;
-    setOCIIPModalMessage('正在更换 IPv6（先删后建）...', false);
-    try {
-      const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/change-ipv6`, {
-        method: 'POST',
-        body: {
-          vnicId: changeV6Btn.dataset.vnicId,
-          ipv6Id: changeV6Btn.dataset.ipv6Id,
-          updateDns
-        }
-      });
-      if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-      if (res.newIpAddress) ociIPSelectedDNSIPv6 = res.newIpAddress;
-      setOCIIPModalMessage(`IPv6 更换成功：${res.newIpAddress || ''}`, false, true);
-      await loadOCIIPInfo();
-      fetchVMs();
-    } catch (err) {
-      setOCIIPModalMessage(err.message, true);
-      addLog(`更换 IPv6 失败：${err.message}`, 'error');
-    } finally {
-      changeV6Btn.disabled = false;
-    }
-    return;
-  }
-
-  const delV6Btn = event.target.closest('.oci-ip-del-v6-btn');
-  if (delV6Btn) {
-    if (!confirm(`确认删除 IPv6 地址 ${delV6Btn.dataset.ip || ''}？`)) return;
-    delV6Btn.disabled = true;
-    setOCIIPModalMessage('正在删除 IPv6...', false);
-    try {
-      const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/delete-ipv6`, {
-        method: 'POST',
-        body: { ipv6Id: delV6Btn.dataset.ipv6Id }
-      });
-      if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-      setOCIIPModalMessage('IPv6 已删除。', false, true);
-      await loadOCIIPInfo();
-      fetchVMs();
-    } catch (err) {
-      setOCIIPModalMessage(err.message, true);
-      addLog(`删除 IPv6 失败：${err.message}`, 'error');
-    } finally {
-      delV6Btn.disabled = false;
-    }
-  }
-}
-
-async function manualUpdateOCIDNSFromModal() {
-  if (!ociIPModalVM || !ociIPInfo) return;
-  const vm = ociIPModalVM;
-  const dnsBindings = ociIPInfo.dnsBindings || {};
-  if (!dnsBindings.hasAny) return;
-
-  // Determine primary public IPv4
-  let ipv4 = '';
-  for (const v of (ociIPInfo.vnics || [])) {
-    for (const p of (v.privateIps || [])) {
-      if (p.publicIp?.ipAddress) {
-        ipv4 = p.publicIp.ipAddress;
-        if (v.isPrimary && p.isPrimary) break;
-      }
-    }
-    if (ipv4) break;
-  }
-
-  // Use the user-selected specific /128 IPv6
-  const checkedRadio = document.querySelector('input[name="oci-dns-ipv6"]:checked');
-  const ipv6 = checkedRadio ? checkedRadio.value : ociIPSelectedDNSIPv6;
-
-  if (dnsBindings.hasAAAA && !ipv6) {
-    setOCIIPModalMessage('实例绑定了 AAAA 记录，但当前没有可用的 128 位 IPv6 地址。', true);
-    return;
-  }
-  if (!ipv4 && !ipv6) {
-    setOCIIPModalMessage('当前没有可用于更新 DNS 的公网 IPv4 或 128 位 IPv6 地址。', true);
-    return;
-  }
-
-  const btn = document.getElementById('oci-ip-manual-dns-btn');
-  if (btn) btn.disabled = true;
-  setOCIIPModalMessage('正在更新 DNS 记录...', false);
-  try {
-    const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/update-dns`, {
-      method: 'POST',
-      body: { ipv4, ipv6 }
-    });
-    if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-    setOCIIPModalMessage('DNS 更新完成。', false, true);
-  } catch (err) {
-    setOCIIPModalMessage(`更新 DNS 失败：${err.message}`, true);
-    addLog(`更新 DNS 失败：${err.message}`, 'error');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
-
-document.addEventListener('DOMContentLoaded', () => {
-  document.getElementById('oci-ip-modal-close')?.addEventListener('click', closeOCIIPModal);
-  document.getElementById('oci-ip-modal-done')?.addEventListener('click', closeOCIIPModal);
-  document.getElementById('oci-ip-modal')?.addEventListener('click', e => {
-    if (e.target.id === 'oci-ip-modal') closeOCIIPModal();
-  });
-  document.getElementById('oci-ip-modal-body')?.addEventListener('click', handleOCIIPActionClick);
-  document.getElementById('oci-ip-modal-body')?.addEventListener('change', e => {
-    if (e.target.name === 'oci-dns-ipv6') {
-      ociIPSelectedDNSIPv6 = e.target.value;
-    }
-  });
-  document.getElementById('oci-ip-attach-v4-btn')?.addEventListener('click', () => openOCIIPSubform('ipv4'));
-  document.getElementById('oci-ip-attach-v6-btn')?.addEventListener('click', () => openOCIIPSubform('ipv6'));
-  document.getElementById('oci-ip-enable-v6-btn')?.addEventListener('click', () => openOCIIPSubform('enable-ipv6'));
-  document.getElementById('oci-ip-attach-reserved-btn')?.addEventListener('click', () => openOCIIPSubform('reserved'));
-  document.getElementById('oci-ip-manual-dns-btn')?.addEventListener('click', manualUpdateOCIDNSFromModal);
-
-  document.getElementById('oci-ip-subform')?.addEventListener('click', e => {
-    if (e.target.id === 'oci-subform-close') closeOCIIPSubform();
-    if (e.target.id === 'oci-v4-submit') submitOCIIPv4Attach();
-    if (e.target.id === 'oci-v6-submit') submitOCIIPv6Attach();
-    if (e.target.id === 'oci-enable-v6-submit') submitOCIEnableSubnetIPv6();
-    if (e.target.id === 'oci-res-submit') submitOCIReservedAttach();
-  });
-  document.getElementById('oci-ip-subform')?.addEventListener('change', e => {
-    if (e.target.id === 'oci-v4-mode') syncOCIIPv4SubformFields();
-    if (e.target.id === 'oci-enable-v6-vnic' && ociIPInfo) {
-      const sf = document.getElementById('oci-ip-subform');
-      if (sf) sf.innerHTML = buildOCIEnableIPv6SubformHTML(ociIPInfo.vnics || [], e.target.value);
-    }
-    if (e.target.id === 'oci-v6-vnic-select' && ociIPInfo) {
-      const v = (ociIPInfo.vnics || []).find(item => item.id === e.target.value);
-      const prefixSelect = document.getElementById('oci-v6-prefix-select');
-      if (prefixSelect && v) {
-        prefixSelect.innerHTML = (v.ipv6CidrBlocks || []).map(c => `<option value="${escapeAttr(c)}">${escapeHtml(c)}</option>`).join('');
-      }
-    }
-    if (e.target.id === 'oci-v6-assign-mode') {
-      const wrap = document.getElementById('oci-v6-manual-wrap');
-      if (wrap) wrap.hidden = e.target.value !== 'manual';
-    }
-    if (e.target.id === 'oci-res-mode') {
-      const isNew = e.target.value === 'new';
-      const exWrap = document.getElementById('oci-res-existing-wrap');
-      const newWrap = document.getElementById('oci-res-new-wrap');
-      if (exWrap) exWrap.hidden = isNew;
-      if (newWrap) newWrap.hidden = !isNew;
-    }
-  });
-});
-
-
-function buildOCIEnableIPv6SubformHTML(vnics, targetVnicId) {
-  const targetVnic = vnics.find(v => v.id === targetVnicId) || vnics[0];
-  const setup = targetVnic?.ipv6Setup || {};
-  const hasSub = Array.isArray(targetVnic?.ipv6CidrBlocks) && targetVnic.ipv6CidrBlocks.length > 0;
-  const suggestedHex = setup.suggestedHex || '7E';
-  const usedHexes = Array.isArray(setup.usedHexes) ? setup.usedHexes : [];
-  const vcnText = setup.vcnHasIpv6
-    ? `已开启 (${(setup.vcnIpv6Cidrs || []).join(', ')})`
-    : '未开启（将自动为 VCN 分配 Oracle IPv6 /56 前缀）';
-  const subText = hasSub
-    ? `已开启 (${(targetVnic.ipv6CidrBlocks || []).join(', ')})`
-    : '未开启（需输入 2 位十六进制字符分配 /64 子网段）';
-  const rtText = setup.routeHasIpv6Default
-    ? '已配置 ::/0 默认 IPv6 路由'
-    : (setup.hasInternetGateway ? '未配置 ::/0（检测到 IGW，可自动添加）' : '未配置 ::/0（未检测到 IGW，请检查网关）');
-  const slText = setup.securityListHasIpv6Egress
-    ? '已存在 ::/0 (所有协议) 出站规则'
-    : '未检测到 ::/0 出站规则（默认不自动修改，请前往「防火墙管理」添加对应出站/入站规则）';
-  return `
-    <div class="oci-ip-subform-title">
-      <span>开启子网 IPv6（VCN /56 → 子网 /64 → 路由表）</span>
-      <button class="ghost-btn oci-ip-btn-sm" type="button" id="oci-subform-close">取消</button>
-    </div>
-    <div class="field-hint" style="margin-bottom: 10px; line-height: 1.65;">
-      <div>1. VCN IPv6 (/56)：${setup.vcnHasIpv6 ? '✅' : '⏳'} ${escapeHtml(vcnText)}</div>
-      <div>2. 子网 IPv6 (/64)：${hasSub ? '✅' : '⏳'} ${escapeHtml(subText)}</div>
-      <div>3. 路由表 (::/0)：${setup.routeHasIpv6Default ? '✅' : '⏳'} ${escapeHtml(rtText)}</div>
-      <div>4. 安全列表（防火墙）：${setup.securityListHasIpv6Egress ? '✅' : 'ℹ️'} ${escapeHtml(slText)}</div>
-    </div>
-    <div class="form-grid">
-      <label class="field compact">
-        <span>目标 VNIC</span>
-        <select id="oci-enable-v6-vnic">
-          ${vnics.map(v => `<option value="${escapeAttr(v.id)}" ${v.id === targetVnic.id ? 'selected' : ''}>${escapeHtml(v.displayName)}</option>`).join('')}
-        </select>
-      </label>
-      <label class="field compact">
-        <span>子网 /64 前缀 Hex（00-FF）</span>
-        <input id="oci-enable-v6-hex" type="text" maxlength="2" value="${escapeAttr(suggestedHex)}" placeholder="例如 7E" ${hasSub ? 'disabled' : ''}>
-        ${usedHexes.length ? `<small class="field-hint">同 VCN 已占用 Hex：${escapeHtml(usedHexes.join(', '))}</small>` : ''}
-      </label>
-    </div>
-    <div style="display:flex; flex-direction:column; gap:6px; margin-top:8px;">
-      <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-        <input id="oci-enable-v6-add-route" type="checkbox" ${setup.routeHasIpv6Default ? '' : 'checked'}>
-        <span>自动在子网路由表添加默认 IPv6 路由 (::/0 → 互联网网关 IGW)</span>
-      </label>
-      <label style="display:flex; align-items:center; gap:6px; font-size:13px;">
-        <input id="oci-enable-v6-add-sl-egress" type="checkbox">
-        <span>可选：在子网默认安全列表自动添加出站 ::/0 (所有协议)</span>
-      </label>
-      <div class="field-hint">提示：如需允许 IPv6 出站或放行入站端口，请前往左侧「防火墙管理」添加对应规则。</div>
-    </div>
-    <div class="oci-ip-subform-actions">
-      <button class="primary-btn oci-ip-btn-sm" type="button" id="oci-enable-v6-submit">${hasSub ? '补全路由/配置' : '确认开启子网 IPv6'}</button>
-    </div>
-  `;
-}
-
-async function submitOCIEnableSubnetIPv6() {
-  if (!ociIPModalVM) return;
-  const vm = ociIPModalVM;
-  const vnicId = document.getElementById('oci-enable-v6-vnic')?.value || '';
-  const hexInput = document.getElementById('oci-enable-v6-hex');
-  const hexByte = hexInput?.value?.trim() || '';
-  const addDefaultRoute = Boolean(document.getElementById('oci-enable-v6-add-route')?.checked);
-  const addSecurityListEgress = Boolean(document.getElementById('oci-enable-v6-add-sl-egress')?.checked);
-
-  if (!hexInput?.disabled && !/^[0-9a-fA-F]{2}$/.test(hexByte)) {
-    setOCIIPModalMessage('请输入有效的 2 位十六进制字符（00 - FF），例如 7E。', true);
-    return;
-  }
-
-  const btn = document.getElementById('oci-enable-v6-submit');
-  if (btn) btn.disabled = true;
-  setOCIIPModalMessage('正在为 VCN/子网开启 IPv6...', false);
-  try {
-    const res = await fetchJSON(`/api/vm/${encodeURIComponent(vm.provider)}/${encodeURIComponent(vm.accountId)}/${encodeURIComponent(vm.id)}/ips/enable-ipv6`, {
-      method: 'POST',
-      body: { vnicId, hexByte, addDefaultRoute, addSecurityListEgress }
-    });
-    if (Array.isArray(res.logs)) res.logs.forEach(l => addLog(l, 'info'));
-    setOCIIPModalMessage(`子网 IPv6 已配置：${res.subnetCidr || ''}。请按需前往「防火墙管理」检查 IPv6 出站/入站规则。`, false, true);
-    closeOCIIPSubform();
-    await loadOCIIPInfo();
-    const hasSubV6 = (ociIPInfo?.vnics || []).some(v => Array.isArray(v.ipv6CidrBlocks) && v.ipv6CidrBlocks.length > 0);
-    if (hasSubV6) {
-      openOCIIPSubform('ipv6');
-    }
-  } catch (err) {
-    setOCIIPModalMessage(err.message, true);
-    addLog(`开启子网 IPv6 失败：${err.message}`, 'error');
-  } finally {
-    if (btn) btn.disabled = false;
-  }
-}
+// Centralized IP management moved to /public/js/ip-manage.js
 
 // ==================== OCI Horizontal Workspace & 7 Tabs ====================
 
@@ -6026,7 +5265,8 @@ function switchOCITab(tab) {
     users: 'oci-tab-users',
     create: 'oci-tab-create',
     tasks: 'oci-tab-tasks',
-    storage: 'oci-tab-storage'
+    storage: 'oci-tab-storage',
+    resources: 'oci-tab-resources'
   };
 
   Object.values(paneMap).forEach(id => {
@@ -6066,6 +5306,10 @@ function switchOCITab(tab) {
     loadOCICreateTasks();
   } else if (currentOCITab === 'storage') {
     loadOCIObjectStorage();
+  } else if (currentOCITab === 'resources') {
+    if (typeof loadOCIResources === 'function') {
+      loadOCIResources();
+    }
   }
 }
 
@@ -7946,6 +7190,7 @@ function switchAzureTab(tab) {
   });
 
   const paneMap = {
+    create: 'azure-tab-create',
     billing: 'azure-tab-billing',
     resources: 'azure-tab-resources'
   };
@@ -7966,7 +7211,11 @@ function switchAzureTab(tab) {
 
   if (!selectedAccount || selectedAccount.provider !== 'azure') return;
 
-  if (currentAzureTab === 'billing') {
+  if (currentAzureTab === 'create') {
+    if (typeof loadAzureCreateOptions === 'function') {
+      loadAzureCreateOptions();
+    }
+  } else if (currentAzureTab === 'billing') {
     loadAzureBillingOverview();
   } else if (currentAzureTab === 'resources') {
     loadAzureResources();

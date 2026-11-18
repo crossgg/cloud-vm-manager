@@ -631,10 +631,12 @@ func (az *AzureService) DeleteResourceByID(resourceID, resourceType string) erro
 	}
 }
 
+var azurePollInterval = 2 * time.Second
+
 func (az *AzureService) waitForAzureOperation(pollURL string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		time.Sleep(2 * time.Second)
+		time.Sleep(azurePollInterval)
 		resp, err := az.requestWithRetry("GET", pollURL, nil, 2)
 		if err != nil {
 			continue

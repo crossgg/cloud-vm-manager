@@ -145,6 +145,7 @@
             <button class="oci-ws-tab" type="button" data-oci-tab="create"><i class="bi bi-plus-circle"></i> 创建实例</button>
             <button class="oci-ws-tab" type="button" data-oci-tab="tasks"><i class="bi bi-list-check"></i> 任务管理</button>
             <button class="oci-ws-tab" type="button" data-oci-tab="storage"><i class="bi bi-hdd-stack"></i> 对象存储</button>
+            <button class="oci-ws-tab" type="button" data-oci-tab="resources"><i class="bi bi-trash3"></i> 闲置资源</button>
           </div>
 
           <!-- OCI Tab: Overview -->
@@ -523,9 +524,57 @@
             </div>
           </div>
 
+          <!-- OCI Tab: Idle Resources Cleanup -->
+          <div id="oci-tab-resources" class="oci-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-trash3"></i> OCI 闲置资源扫描与清理</h3>
+                  <p id="oci-resources-meta">检测未挂载启动盘/数据卷（200 GB 免费额度）、闲置保留 IP、卷备份与自定义镜像</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="oci-resources-scan-btn" class="secondary-btn" type="button"><i class="bi bi-search"></i> 扫描资源</button>
+                </div>
+              </div>
+
+              <div class="dt-stats-grid az-resource-stats">
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">未挂载卷 / 闲置容量</span>
+                  <strong id="oci-res-idle-vols">--</strong>
+                  <small id="oci-res-total-vol-gb" class="stat-meta">--</small>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">闲置保留公网 IP</span>
+                  <strong id="oci-res-idle-ips">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">卷备份数量</span>
+                  <strong id="oci-res-backups">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">自定义镜像</span>
+                  <strong id="oci-res-images">--</strong>
+                </div>
+              </div>
+
+              <div class="az-cleanup-toolbar">
+                <div class="az-cleanup-toolbar-left">
+                  <button id="oci-clean-select-idle-btn" class="secondary-btn oci-ip-btn-sm" type="button">勾选全部闲置项</button>
+                  <button id="oci-clean-selected-btn" class="ghost-btn oci-ip-btn-sm oci-ip-btn-danger" type="button">删除所选资源</button>
+                </div>
+              </div>
+
+              <div id="oci-resources-message" class="form-message"></div>
+              <div id="oci-resources-table-wrap">
+                <div class="empty-state compact">点击「扫描资源」查看当前 OCI 账号下的启动盘、数据卷、保留 IP、备份与自定义镜像。</div>
+              </div>
+            </div>
+          </div>
+
           <!-- Azure Account Horizontal Tab Bar -->
           <div id="azure-workspace-tabs" class="oci-workspace-tabs" hidden>
             <button class="azure-ws-tab oci-ws-tab active" type="button" data-azure-tab="instances"><i class="bi bi-cpu"></i> 实例管理</button>
+            <button class="azure-ws-tab oci-ws-tab" type="button" data-azure-tab="create"><i class="bi bi-plus-circle"></i> 创建实例</button>
             <button class="azure-ws-tab oci-ws-tab" type="button" data-azure-tab="billing"><i class="bi bi-wallet2"></i> 赠金与消费</button>
             <button class="azure-ws-tab oci-ws-tab" type="button" data-azure-tab="resources"><i class="bi bi-trash3"></i> 资源与孤立清理</button>
           </div>
@@ -720,6 +769,331 @@
               <div id="az-resources-message" class="form-message"></div>
               <div id="az-resources-table-wrap">
                 <div class="empty-state compact">点击「扫描资源」查看当前账号下的资源绑定状态与计费风险。</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Azure Tab: Create Instance -->
+          <div id="azure-tab-create" class="azure-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-plus-circle"></i> 创建 Azure 虚拟机</h3>
+                  <p>支持一键创建双栈网络（IPv4 + IPv6）、Spot 抢占式实例、SSH 密钥或密码登录</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="az-create-reload-btn" class="ghost-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新参数</button>
+                </div>
+              </div>
+
+              <form id="az-create-form">
+                <div class="oci-task-templates">
+                  <span class="oci-task-templates-label">快速模板：</span>
+                  <button class="ghost-btn az-template-btn" type="button" data-template="b1s">B1s 学生免费 (1C1G)</button>
+                  <button class="ghost-btn az-template-btn" type="button" data-template="b2ats">B2ats v2 (2C1G AMD)</button>
+                  <button class="ghost-btn az-template-btn" type="button" data-template="b2pts">B2pts v2 (2C1G ARM)</button>
+                </div>
+
+                <div class="form-grid-equal">
+                  <label class="field">
+                    <span>实例名称 *</span>
+                    <input id="az-create-name" type="text" required placeholder="例如 jp-vps-01">
+                  </label>
+                  <label class="field">
+                    <span>资源组</span>
+                    <select id="az-create-rg"></select>
+                  </label>
+                  <label class="field">
+                    <span>区域 (Region)</span>
+                    <select id="az-create-location"></select>
+                  </label>
+                  <label class="field">
+                    <span>可用区 (Zone，可选)</span>
+                    <select id="az-create-zone">
+                      <option value="">自动 / 不指定区域</option>
+                      <option value="1">Zone 1</option>
+                      <option value="2">Zone 2</option>
+                      <option value="3">Zone 3</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>实例规格 (VM Size)</span>
+                    <select id="az-create-size"></select>
+                  </label>
+                  <label class="field">
+                    <span>系统镜像</span>
+                    <select id="az-create-image"></select>
+                  </label>
+                  <label class="field">
+                    <span>系统盘类型</span>
+                    <select id="az-create-disk-type">
+                      <option value="StandardSSD_LRS" selected>Standard SSD (推荐)</option>
+                      <option value="Standard_LRS">Standard HDD (最省钱)</option>
+                      <option value="Premium_LRS">Premium SSD (高性能)</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>系统盘大小 (GB，留空默认镜像大小)</span>
+                    <input id="az-create-disk-size" type="number" min="30" max="4096" placeholder="默认 30">
+                  </label>
+                </div>
+
+                <div class="oci-default-net-bar" style="margin-top: 12px;">
+                  <div class="oci-default-net-left">
+                    <span class="field-hint">无可用子网时可留空（创建时自动建立），或点右侧按钮预先创建默认 VNet + NSG</span>
+                  </div>
+                  <div class="oci-default-net-actions">
+                    <label class="switch-row compact">
+                      <input id="az-default-net-ipv6" type="checkbox" checked>
+                      <span>开启双栈 IPv6</span>
+                    </label>
+                    <button id="az-create-default-net-btn" class="secondary-btn oci-ip-btn-sm" type="button">一键创建默认双栈网络</button>
+                  </div>
+                </div>
+
+                <div class="form-grid-equal" style="margin-top: 10px;">
+                  <label class="field">
+                    <span>虚拟网络子网 (Subnet)</span>
+                    <select id="az-create-subnet">
+                      <option value="">自动创建默认 VNet/子网</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>网络安全组 (NSG，可选)</span>
+                    <select id="az-create-nsg">
+                      <option value="">不单独绑定 / 跟随子网默认</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>登录用户名</span>
+                    <input id="az-create-user" type="text" value="azureuser" required>
+                  </label>
+                  <label class="field">
+                    <span>认证方式</span>
+                    <select id="az-create-auth-type">
+                      <option value="ssh" selected>SSH 公钥 (推荐)</option>
+                      <option value="password">用户名 + 密码</option>
+                    </select>
+                  </label>
+                </div>
+
+                <div class="oci-task-network-checks" style="margin-top: 10px;">
+                  <label class="switch-row compact">
+                    <input id="az-create-pub-v4" type="checkbox" checked>
+                    <span>分配 Standard 公网 IPv4</span>
+                  </label>
+                  <label class="switch-row compact">
+                    <input id="az-create-pub-v6" type="checkbox">
+                    <span>分配 Standard 公网 IPv6（自动为 VNet/子网补全双栈）</span>
+                  </label>
+                  <label class="switch-row compact">
+                    <input id="az-create-spot" type="checkbox">
+                    <span>Spot 抢占式实例（更低成本，可能被回收释放）</span>
+                  </label>
+                </div>
+
+                <div class="field" id="az-create-ssh-wrap" style="margin-top: 12px;">
+                  <div class="oci-task-label-row">
+                    <span>SSH 公钥 *</span>
+                    <label class="secondary-btn oci-upload-pub-btn">
+                      <i class="bi bi-upload"></i> 上传公钥 (.pub)
+                      <input id="az-create-ssh-file" type="file" accept=".pub,.txt,text/plain" hidden>
+                    </label>
+                  </div>
+                  <textarea id="az-create-ssh-key" rows="3" placeholder="ssh-ed25519 AAAAC3... 或 ssh-rsa AAAAB3..."></textarea>
+                </div>
+
+                <label class="field" id="az-create-pass-wrap" style="margin-top: 12px;" hidden>
+                  <span>管理员密码 *（需 12 位以上且包含大小写字母/数字/特殊字符中三类）</span>
+                  <input id="az-create-password" type="password" placeholder="输入强密码">
+                </label>
+
+                <label class="field" style="margin-top: 12px;">
+                  <span>Cloud-init 自定义脚本（可选）</span>
+                  <textarea id="az-create-custom-data" rows="3" placeholder="#cloud-config&#10;..."></textarea>
+                </label>
+
+                <div style="display:flex; gap:10px; align-items:center; margin-top: 14px;">
+                  <button id="az-create-submit-btn" class="primary-btn" type="submit">立即创建 Azure VM</button>
+                </div>
+                <div id="az-create-message" class="form-message"></div>
+                <div id="az-create-logs" class="oci-task-logs" hidden style="margin-top: 10px;"></div>
+              </form>
+            </div>
+          </div>
+
+          <!-- GCP Account Horizontal Tab Bar -->
+          <div id="gcp-workspace-tabs" class="oci-workspace-tabs" hidden>
+            <button class="gcp-ws-tab oci-ws-tab active" type="button" data-gcp-tab="instances"><i class="bi bi-cpu"></i> 实例管理</button>
+            <button class="gcp-ws-tab oci-ws-tab" type="button" data-gcp-tab="create"><i class="bi bi-plus-circle"></i> 创建实例</button>
+            <button class="gcp-ws-tab oci-ws-tab" type="button" data-gcp-tab="resources"><i class="bi bi-trash3"></i> 资源与静态 IP</button>
+          </div>
+
+          <!-- GCP Tab: Create Instance -->
+          <div id="gcp-tab-create" class="gcp-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-plus-circle"></i> 创建 GCP 实例</h3>
+                  <p>支持 E2 免费额度机型、Spot 抢占式实例、IPv4/IPv6 双栈及开机启动脚本</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="gcp-create-reload-btn" class="ghost-btn" type="button"><i class="bi bi-arrow-clockwise"></i> 刷新参数</button>
+                </div>
+              </div>
+
+              <form id="gcp-create-form">
+                <div class="oci-task-templates">
+                  <span class="oci-task-templates-label">快速模板：</span>
+                  <button class="ghost-btn gcp-template-btn" type="button" data-template="e2_micro">E2-Micro 免费适用 (us-central1-a / 30G标准盘)</button>
+                  <button class="ghost-btn gcp-template-btn" type="button" data-template="e2_small">E2-Small (2C2G)</button>
+                  <button class="ghost-btn gcp-template-btn" type="button" data-template="e2_medium">E2-Medium (2C4G)</button>
+                </div>
+
+                <div class="form-grid-equal">
+                  <label class="field">
+                    <span>实例名称 *（小写字母、数字、短横线）</span>
+                    <input id="gcp-create-name" type="text" required placeholder="例如 gcp-vps-01">
+                  </label>
+                  <label class="field">
+                    <span>可用区 (Zone)</span>
+                    <select id="gcp-create-zone"></select>
+                  </label>
+                  <label class="field">
+                    <span>实例规格 (Machine Type)</span>
+                    <select id="gcp-create-machine"></select>
+                  </label>
+                  <label class="field">
+                    <span>系统镜像</span>
+                    <select id="gcp-create-image"></select>
+                  </label>
+                  <label class="field">
+                    <span>引导盘类型</span>
+                    <select id="gcp-create-disk-type">
+                      <option value="pd-standard" selected>标准永久性磁盘 (pd-standard · 免费适用)</option>
+                      <option value="pd-balanced">平衡永久性磁盘 (pd-balanced)</option>
+                      <option value="pd-ssd">SSD 永久性磁盘 (pd-ssd)</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>引导盘大小 (GB)</span>
+                    <input id="gcp-create-disk-size" type="number" min="10" max="65536" value="10">
+                  </label>
+                  <label class="field">
+                    <span>VPC 网络</span>
+                    <select id="gcp-create-network"></select>
+                  </label>
+                  <label class="field">
+                    <span>子网 (Subnetwork)</span>
+                    <select id="gcp-create-subnet"></select>
+                  </label>
+                  <label class="field">
+                    <span>网络层级 (Network Tier)</span>
+                    <select id="gcp-create-tier">
+                      <option value="PREMIUM" selected>PREMIUM (优质级)</option>
+                      <option value="STANDARD">STANDARD (标准级)</option>
+                    </select>
+                  </label>
+                  <label class="field">
+                    <span>网络标签 (Tags，逗号分隔，可选)</span>
+                    <input id="gcp-create-tags" type="text" placeholder="例如 http-server,https-server">
+                  </label>
+                </div>
+
+                <div class="oci-task-network-checks" style="margin-top: 10px;">
+                  <label class="switch-row compact">
+                    <input id="gcp-create-pub-v4" type="checkbox" checked>
+                    <span>分配外部 IPv4</span>
+                  </label>
+                  <label class="switch-row compact">
+                    <input id="gcp-create-pub-v6" type="checkbox">
+                    <span>分配外部 IPv6 (/96 双栈)</span>
+                  </label>
+                  <label class="switch-row compact">
+                    <input id="gcp-create-spot" type="checkbox">
+                    <span>Spot 抢占式实例</span>
+                  </label>
+                </div>
+
+                <label id="gcp-create-auto-vpc-confirm-wrap" class="switch-row compact" style="margin-top: 8px; color: var(--amber, #f59e0b);" hidden>
+                  <input id="gcp-create-confirm-irreversible" type="checkbox">
+                  <span>所选 VPC 为默认 Auto Mode，开启外部 IPv6 需先将其不可逆转换为 Custom Mode 并升级子网为双栈，我已了解并确认</span>
+                </label>
+
+                <div class="form-grid-equal" style="margin-top: 12px;">
+                  <label class="field">
+                    <span>SSH 用户名（可选，默认跟随镜像）</span>
+                    <input id="gcp-create-ssh-user" type="text" value="debian" placeholder="debian / ubuntu / root">
+                  </label>
+                </div>
+
+                <div class="field" style="margin-top: 8px;">
+                  <div class="oci-task-label-row">
+                    <span>SSH 公钥（可选，写入 Instance metadata ssh-keys）</span>
+                    <label class="secondary-btn oci-upload-pub-btn">
+                      <i class="bi bi-upload"></i> 上传公钥 (.pub)
+                      <input id="gcp-create-ssh-file" type="file" accept=".pub,.txt,text/plain" hidden>
+                    </label>
+                  </div>
+                  <textarea id="gcp-create-ssh-key" rows="2" placeholder="ssh-ed25519 AAAAC3..."></textarea>
+                </div>
+
+                <label class="field" style="margin-top: 10px;">
+                  <span>Startup Script 启动脚本（可选）</span>
+                  <textarea id="gcp-create-startup-script" rows="3" placeholder="#!/bin/bash&#10;..."></textarea>
+                </label>
+
+                <div style="display:flex; gap:10px; align-items:center; margin-top: 14px;">
+                  <button id="gcp-create-submit-btn" class="primary-btn" type="submit">立即创建 GCP 实例</button>
+                </div>
+                <div id="gcp-create-message" class="form-message"></div>
+                <div id="gcp-create-logs" class="oci-task-logs" hidden style="margin-top: 10px;"></div>
+              </form>
+            </div>
+          </div>
+
+          <!-- GCP Tab: Resources & Static IPs -->
+          <div id="gcp-tab-resources" class="gcp-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading">
+                <div>
+                  <h3><i class="bi bi-trash3"></i> GCP 磁盘、快照与静态 IP 扫描清理</h3>
+                  <p id="gcp-resources-meta">检测未挂载孤立磁盘、全局快照与未绑定闲置静态 IP，避免删机后持续产生费用</p>
+                </div>
+                <div class="dt-monitor-actions">
+                  <button id="gcp-resources-scan-btn" class="secondary-btn" type="button"><i class="bi bi-search"></i> 扫描资源</button>
+                </div>
+              </div>
+
+              <div class="dt-stats-grid az-resource-stats">
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">扫描资源总数</span>
+                  <strong id="gcp-res-total">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">未挂载孤立磁盘</span>
+                  <strong id="gcp-res-orphan-disks">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">全局快照</span>
+                  <strong id="gcp-res-snapshots">--</strong>
+                </div>
+                <div class="dt-stat-card">
+                  <span class="dt-stat-label">闲置静态 IP</span>
+                  <strong id="gcp-res-idle-ips">--</strong>
+                </div>
+              </div>
+
+              <div class="az-cleanup-toolbar">
+                <div class="az-cleanup-toolbar-left">
+                  <button id="gcp-clean-select-orphans-btn" class="secondary-btn oci-ip-btn-sm" type="button">勾选全部闲置/孤立项</button>
+                  <button id="gcp-clean-selected-btn" class="ghost-btn oci-ip-btn-sm oci-ip-btn-danger" type="button">删除所选资源</button>
+                </div>
+              </div>
+
+              <div id="gcp-resources-message" class="form-message"></div>
+              <div id="gcp-resources-table-wrap">
+                <div class="empty-state compact">点击「扫描资源」查看当前项目的磁盘、快照与静态 IP 状态。</div>
               </div>
             </div>
           </div>
@@ -1542,9 +1916,10 @@
         <button id="azure-nsg-add-rule-btn" class="primary-btn" type="button"><i class="bi bi-plus-lg"></i> 添加规则</button>
       </div>
 
-      <!-- Add Rule Inline Form -->
+      <!-- Add / Edit Rule Inline Form -->
       <form id="azure-nsg-add-form" class="settings-panel" style="margin: 12px 20px; display: none; background: var(--panel-soft);">
-        <div style="font-weight: 600; margin-bottom: 10px; font-size: 13px;">新建安全规则</div>
+        <input type="hidden" id="az-rule-edit-mode" value="">
+        <div id="azure-nsg-form-title" style="font-weight: 600; margin-bottom: 10px; font-size: 13px;">新建安全规则</div>
         <div class="form-grid">
           <label class="field">
             <span>规则名称</span>
@@ -1576,11 +1951,21 @@
         <div class="form-grid">
           <label class="field">
             <span>源地址前缀</span>
-            <input id="az-rule-source-ip" type="text" value="*" placeholder="* 或 1.2.3.4 或 10.0.0.0/24">
+            <input id="az-rule-source-ip" type="text" value="*" placeholder="* 或 1.2.3.4 或 ::/0">
           </label>
+          <label class="field">
+            <span>目标地址前缀</span>
+            <input id="az-rule-dest-ip" type="text" value="*" placeholder="* 或 ::/0 或 10.0.0.0/24">
+          </label>
+        </div>
+        <div class="form-grid">
           <label class="field">
             <span>目标端口范围</span>
             <input id="az-rule-dest-port" type="text" required placeholder="例如 22 或 80,443 或 8080-8090 或 *">
+          </label>
+          <label class="field">
+            <span>说明描述 (选填)</span>
+            <input id="az-rule-desc" type="text" placeholder="例如 放行运维 SSH 访问">
           </label>
         </div>
         <div class="quick-port-chips" id="azure-quick-ports">
@@ -1592,10 +1977,6 @@
           <button type="button" class="port-chip" data-port="3389">RDP (3389)</button>
           <button type="button" class="port-chip" data-port="*">全部端口 (*)</button>
         </div>
-        <label class="field" style="margin-top: 10px;">
-          <span>说明描述 (选填)</span>
-          <input id="az-rule-desc" type="text" placeholder="例如 放行运维 SSH 访问">
-        </label>
         <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px;">
           <button id="az-rule-cancel-btn" class="secondary-btn" type="button">取消</button>
           <button id="az-rule-submit-btn" class="primary-btn" type="submit">保存规则</button>
@@ -1861,6 +2242,8 @@
   </div>
 
   <script src="/public/app.js"></script>
+  <script src="/public/js/ip-manage.js"></script>
+  <script src="/public/js/azure-gcp-workspace.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const toggleBtn = document.getElementById('theme-toggle');

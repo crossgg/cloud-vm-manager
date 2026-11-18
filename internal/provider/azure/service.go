@@ -249,53 +249,112 @@ func (az *AzureService) GetVM(vmName string) (map[string]interface{}, error) {
 	}
 
 	// 尝试获取网卡信息
+	ipv6Entries := make([]map[string]interface{}, 0)
 	if networkProfile, ok := vm["properties"].(map[string]interface{})["networkProfile"].(map[string]interface{}); ok {
 		if networkInterfaces, ok := networkProfile["networkInterfaces"].([]interface{}); ok && len(networkInterfaces) > 0 {
-			if nic, ok := networkInterfaces[0].(map[string]interface{}); ok {
-				if nicId, ok := nic["id"].(string); ok {
-					nicName := ""
-					if parts := splitPath(nicId); len(parts) >= 2 {
-						nicName = parts[len(parts)-1]
+			for nicIdx, rawNICRef := range networkInterfaces {
+				nic, ok := rawNICRef.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				nicId, ok := nic["id"].(string)
+				if !ok || nicId == "" {
+					continue
+				}
+				nicName := ""
+				if parts := splitPath(nicId); len(parts) >= 2 {
+					nicName = parts[len(parts)-1]
+					if nicIdx == 0 {
 						result["nicName"] = nicName
 					}
+				}
+				nicInfo, err := az.getNetworkInterfaceByID(nicId)
+				if err != nil || nicInfo == nil {
+					continue
+				}
+				props, _ := nicInfo["properties"].(map[string]interface{})
+				ipConfigs, _ := props["ipConfigurations"].([]interface{})
+				for _, rawCfg := range ipConfigs {
+					ipConfig, ok := rawCfg.(map[string]interface{})
+					if !ok {
+						continue
+					}
+					cfgProps, _ := ipConfig["properties"].(map[string]interface{})
+					if cfgProps == nil {
+						continue
+					}
+					privVer, _ := cfgProps["privateIPAddressVersion"].(string)
+					privAddr, _ := cfgProps["privateIPAddress"].(string)
+					isIPv6Cfg := strings.EqualFold(privVer, "IPv6") || strings.Contains(privAddr, ":")
 
-					if nicName != "" {
-						nicInfo, err := az.getNetworkInterface(nicName)
-						if err == nil {
-							// 提取内网IP
-							if ipConfigs, ok := nicInfo["properties"].(map[string]interface{})["ipConfigurations"].([]interface{}); ok && len(ipConfigs) > 0 {
-								if ipConfig, ok := ipConfigs[0].(map[string]interface{}); ok {
-									if privateIP, ok := ipConfig["properties"].(map[string]interface{})["privateIPAddress"].(string); ok {
-										result["privateIP"] = privateIP
-									} else {
-										result["privateIP"] = "未分配"
-									}
-
-									// 提取公网IP信息
-									if publicIPRef, ok := ipConfig["properties"].(map[string]interface{})["publicIPAddress"].(map[string]interface{}); ok {
-										if publicIPId, ok := publicIPRef["id"].(string); ok {
-											publicIPInfo, err := az.getPublicIP(publicIPId)
-											if err == nil {
-												publicIPResult := make(map[string]interface{})
-												if ipAddr, ok := publicIPInfo["properties"].(map[string]interface{})["ipAddress"].(string); ok {
-													publicIPResult["ipAddress"] = ipAddr
-												} else {
-													publicIPResult["ipAddress"] = "未分配"
-												}
-												if name, ok := publicIPInfo["name"].(string); ok {
-													publicIPResult["name"] = name
-												} else {
-													publicIPResult["name"] = "N/A"
-												}
-												result["publicIP"] = publicIPResult
-											}
-										}
+					var publicIPInfo map[string]interface{}
+					var pubAddr, pubName string
+					if publicIPRef, ok := cfgProps["publicIPAddress"].(map[string]interface{}); ok {
+						if publicIPId, ok := publicIPRef["id"].(string); ok && publicIPId != "" {
+							if info, err := az.getPublicIP(publicIPId); err == nil && info != nil {
+								publicIPInfo = info
+								if pubProps, ok := info["properties"].(map[string]interface{}); ok {
+									pubAddr, _ = pubProps["ipAddress"].(string)
+									if ver, _ := pubProps["publicIPAddressVersion"].(string); strings.EqualFold(ver, "IPv6") {
+										isIPv6Cfg = true
 									}
 								}
+								pubName, _ = info["name"].(string)
 							}
 						}
 					}
+
+					if isIPv6Cfg {
+						v6Addr := strings.TrimSpace(pubAddr)
+						if v6Addr == "" {
+							v6Addr = strings.TrimSpace(privAddr)
+						}
+						if v6Addr != "" {
+							cfgID, _ := ipConfig["id"].(string)
+							if cfgID == "" {
+								cfgID = nicId + "|ipcfg|" + stringValFromMap(ipConfig, "name")
+							}
+							ipv6Entries = append(ipv6Entries, map[string]interface{}{
+								"id":               cfgID,
+								"ipAddress":        v6Addr,
+								"cidrPrefixLength": 128,
+								"canChange":        publicIPInfo != nil,
+							})
+							if _, exists := result["ipv6"]; !exists && pubAddr != "" {
+								result["ipv6"] = pubAddr
+							}
+						}
+						continue
+					}
+
+					// Primary/first IPv4 fields for VM card compatibility
+					if nicIdx == 0 {
+						if _, hasPriv := result["privateIP"]; !hasPriv && privAddr != "" {
+							result["privateIP"] = privAddr
+						}
+						if _, hasPub := result["publicIP"]; !hasPub && publicIPInfo != nil {
+							publicIPResult := map[string]interface{}{
+								"ipAddress": "未分配",
+								"name":      "N/A",
+							}
+							if pubAddr != "" {
+								publicIPResult["ipAddress"] = pubAddr
+							}
+							if pubName != "" {
+								publicIPResult["name"] = pubName
+							}
+							result["publicIP"] = publicIPResult
+						}
+					}
 				}
+			}
+		}
+	}
+	if len(ipv6Entries) > 0 {
+		result["ipv6s"] = ipv6Entries
+		if _, exists := result["ipv6"]; !exists {
+			if addr, ok := ipv6Entries[0]["ipAddress"].(string); ok {
+				result["ipv6"] = addr
 			}
 		}
 	}
@@ -315,6 +374,39 @@ func (az *AzureService) GetVM(vmName string) (map[string]interface{}, error) {
 	result["status"] = az.getVMStatus(vm)
 
 	return result, nil
+}
+
+func stringValFromMap(m map[string]interface{}, key string) string {
+	if m == nil {
+		return ""
+	}
+	v, _ := m[key].(string)
+	return v
+}
+
+func (az *AzureService) getNetworkInterfaceByID(nicID string) (map[string]interface{}, error) {
+	if cleanID, err := validateARMResourceID(nicID); err == nil {
+		reqURL := fmt.Sprintf("https://management.azure.com%s?api-version=2023-04-01", cleanID)
+		resp, err := az.request("GET", reqURL, nil)
+		if err != nil {
+			return nil, err
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			body, _ := io.ReadAll(resp.Body)
+			return nil, fmt.Errorf("GET NIC failed (%d): %s", resp.StatusCode, string(body))
+		}
+		var result map[string]interface{}
+		if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+			return nil, err
+		}
+		return result, nil
+	}
+	parts := splitPath(nicID)
+	if len(parts) > 0 {
+		return az.getNetworkInterface(parts[len(parts)-1])
+	}
+	return nil, fmt.Errorf("invalid NIC id %q", nicID)
 }
 
 func (az *AzureService) getNetworkInterface(nicName string) (map[string]interface{}, error) {
@@ -599,65 +691,7 @@ func (az *AzureService) RestartVM(vmName string) error {
 }
 
 func (az *AzureService) ChangeIP(vmName string) (*provider.ChangeIPResult, error) {
-	var logs []string
-
-	vm, err := az.GetVM(vmName)
-	if err != nil {
-		return nil, err
-	}
-
-	nicName, ok := vm["nicName"].(string)
-	if !ok || nicName == "" {
-		return nil, fmt.Errorf("无法获取网卡信息")
-	}
-
-	oldIPName := ""
-	if publicIP, ok := vm["publicIP"].(map[string]interface{}); ok {
-		if ipName, ok := publicIP["name"].(string); ok && ipName != "N/A" {
-			oldIPName = ipName
-		}
-	}
-
-	newIPName := fmt.Sprintf("new-ip-%d", time.Now().Unix())
-
-	logs = append(logs, fmt.Sprintf("[1/3] 正在创建新IP: %s...", newIPName))
-	if err := az.CreatePublicIP(newIPName); err != nil {
-		return nil, fmt.Errorf("创建IP失败: %w", err)
-	}
-	logs = append(logs, fmt.Sprintf("[1/3] 创建新IP成功: %s", newIPName))
-
-	logs = append(logs, "[2/3] 正在关联新IP到网卡...")
-	if err := az.UpdateNetworkInterface(nicName, newIPName); err != nil {
-		return nil, fmt.Errorf("关联IP失败: %w", err)
-	}
-	logs = append(logs, "[2/3] 关联新IP成功")
-
-	if oldIPName != "" {
-		logs = append(logs, fmt.Sprintf("[3/3] 正在删除旧IP: %s...", oldIPName))
-		if err := az.DeletePublicIP(oldIPName); err != nil {
-			logs = append(logs, fmt.Sprintf("[3/3] 删除旧IP失败: %v (继续执行)", err))
-		} else {
-			logs = append(logs, fmt.Sprintf("[3/3] 删除旧IP成功: %s", oldIPName))
-		}
-	} else {
-		logs = append(logs, "[3/3] 无旧IP需要删除")
-	}
-
-	var newIPAddress string
-	if updatedVM, err := az.GetVM(vmName); err == nil {
-		if publicIP, ok := updatedVM["publicIP"].(map[string]interface{}); ok {
-			if ipAddr, ok := publicIP["ipAddress"].(string); ok {
-				newIPAddress = ipAddr
-			}
-		}
-	}
-
-	return &provider.ChangeIPResult{
-		Success:      true,
-		Message:      "IP更换成功",
-		NewIPAddress: newIPAddress,
-		Logs:         logs,
-	}, nil
+	return az.ChangePrivateIPPublicIP(vmName, "")
 }
 
 func (az *AzureService) CreatePublicIP(ipName string) error {
@@ -835,6 +869,46 @@ func (az *AzureService) ListNSGs() ([]AzureNSG, error) {
 	return nsgs, nil
 }
 
+func joinAzureRuleList(props map[string]interface{}, singularKey, pluralKey string) string {
+	if s, ok := props[singularKey].(string); ok && strings.TrimSpace(s) != "" {
+		return strings.TrimSpace(s)
+	}
+	if list, ok := props[pluralKey].([]interface{}); ok && len(list) > 0 {
+		strList := make([]string, 0, len(list))
+		for _, p := range list {
+			if s, ok := p.(string); ok && strings.TrimSpace(s) != "" {
+				strList = append(strList, strings.TrimSpace(s))
+			}
+		}
+		return strings.Join(strList, ",")
+	}
+	return ""
+}
+
+func applyAzureRuleField(props map[string]interface{}, singularKey, pluralKey, raw string) {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		trimmed = "*"
+	}
+	if strings.Contains(trimmed, ",") {
+		parts := strings.Split(trimmed, ",")
+		items := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if s := strings.TrimSpace(part); s != "" {
+				items = append(items, s)
+			}
+		}
+		if len(items) > 1 {
+			props[pluralKey] = items
+			return
+		}
+		if len(items) == 1 {
+			trimmed = items[0]
+		}
+	}
+	props[singularKey] = trimmed
+}
+
 func parseAzureRules(list []interface{}) []AzureNSGRule {
 	rules := make([]AzureNSGRule, 0, len(list))
 	for _, v := range list {
@@ -855,32 +929,10 @@ func parseAzureRules(list []interface{}) []AzureNSGRule {
 		direction, _ := props["direction"].(string)
 		access, _ := props["access"].(string)
 		protocol, _ := props["protocol"].(string)
-		sourceAddressPrefix, _ := props["sourceAddressPrefix"].(string)
-		if sourceAddressPrefix == "" {
-			if prefixes, ok := props["sourceAddressPrefixes"].([]interface{}); ok && len(prefixes) > 0 {
-				var strList []string
-				for _, p := range prefixes {
-					if s, ok := p.(string); ok {
-						strList = append(strList, s)
-					}
-				}
-				sourceAddressPrefix = strings.Join(strList, ",")
-			}
-		}
-		sourcePortRange, _ := props["sourcePortRange"].(string)
-		destinationAddressPrefix, _ := props["destinationAddressPrefix"].(string)
-		if destinationAddressPrefix == "" {
-			if prefixes, ok := props["destinationAddressPrefixes"].([]interface{}); ok && len(prefixes) > 0 {
-				var strList []string
-				for _, p := range prefixes {
-					if s, ok := p.(string); ok {
-						strList = append(strList, s)
-					}
-				}
-				destinationAddressPrefix = strings.Join(strList, ",")
-			}
-		}
-		destinationPortRange, _ := props["destinationPortRange"].(string)
+		sourceAddressPrefix := joinAzureRuleList(props, "sourceAddressPrefix", "sourceAddressPrefixes")
+		sourcePortRange := joinAzureRuleList(props, "sourcePortRange", "sourcePortRanges")
+		destinationAddressPrefix := joinAzureRuleList(props, "destinationAddressPrefix", "destinationAddressPrefixes")
+		destinationPortRange := joinAzureRuleList(props, "destinationPortRange", "destinationPortRanges")
 		description, _ := props["description"].(string)
 
 		rules = append(rules, AzureNSGRule{
@@ -928,31 +980,21 @@ func (az *AzureService) CreateOrUpdateNSGRule(rg, nsgName string, rule AzureNSGR
 	if rule.Protocol == "" {
 		rule.Protocol = "*"
 	}
-	if rule.SourceAddressPrefix == "" {
-		rule.SourceAddressPrefix = "*"
+
+	props := map[string]interface{}{
+		"priority":    rule.Priority,
+		"direction":   rule.Direction,
+		"access":      rule.Access,
+		"protocol":    rule.Protocol,
+		"description": rule.Description,
 	}
-	if rule.SourcePortRange == "" {
-		rule.SourcePortRange = "*"
-	}
-	if rule.DestinationAddressPrefix == "" {
-		rule.DestinationAddressPrefix = "*"
-	}
-	if rule.DestinationPortRange == "" {
-		rule.DestinationPortRange = "*"
-	}
+	applyAzureRuleField(props, "sourceAddressPrefix", "sourceAddressPrefixes", rule.SourceAddressPrefix)
+	applyAzureRuleField(props, "sourcePortRange", "sourcePortRanges", rule.SourcePortRange)
+	applyAzureRuleField(props, "destinationAddressPrefix", "destinationAddressPrefixes", rule.DestinationAddressPrefix)
+	applyAzureRuleField(props, "destinationPortRange", "destinationPortRanges", rule.DestinationPortRange)
 
 	payload := map[string]interface{}{
-		"properties": map[string]interface{}{
-			"priority":                 rule.Priority,
-			"direction":                rule.Direction,
-			"access":                   rule.Access,
-			"protocol":                 rule.Protocol,
-			"sourceAddressPrefix":      rule.SourceAddressPrefix,
-			"sourcePortRange":          rule.SourcePortRange,
-			"destinationAddressPrefix": rule.DestinationAddressPrefix,
-			"destinationPortRange":     rule.DestinationPortRange,
-			"description":              rule.Description,
-		},
+		"properties": props,
 	}
 
 	body, err := json.Marshal(payload)
@@ -960,7 +1002,7 @@ func (az *AzureService) CreateOrUpdateNSGRule(rg, nsgName string, rule AzureNSGR
 		return err
 	}
 
-	url := fmt.Sprintf(
+	reqURL := fmt.Sprintf(
 		"https://management.azure.com/subscriptions/%s/resourceGroups/%s/providers/Microsoft.Network/networkSecurityGroups/%s/securityRules/%s?api-version=2023-05-01",
 		url.PathEscape(az.Account.SubId),
 		url.PathEscape(rg),
@@ -968,17 +1010,30 @@ func (az *AzureService) CreateOrUpdateNSGRule(rg, nsgName string, rule AzureNSGR
 		url.PathEscape(rule.Name),
 	)
 
-	resp, err := az.request("PUT", url, bytes.NewBuffer(body))
+	resp, err := az.request("PUT", reqURL, bytes.NewBuffer(body))
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	asyncURL := resp.Header.Get("Azure-AsyncOperation")
+	locationURL := resp.Header.Get("Location")
+	resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		respBody, _ := io.ReadAll(resp.Body)
+	switch resp.StatusCode {
+	case http.StatusOK, http.StatusCreated:
+		return nil
+	case http.StatusAccepted:
+		pollURL := asyncURL
+		if pollURL == "" {
+			pollURL = locationURL
+		}
+		if pollURL != "" {
+			return az.waitForAzureOperation(pollURL, 60*time.Second)
+		}
+		return nil
+	default:
 		return fmt.Errorf("create/update NSG rule failed, status: %d, response: %s", resp.StatusCode, string(respBody))
 	}
-	return nil
 }
 
 func (az *AzureService) DeleteNSGRule(rg, nsgName, ruleName string) error {

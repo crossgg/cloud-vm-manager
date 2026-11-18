@@ -98,12 +98,16 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 	r.POST("/api/vm/:provider/:account/:name/ips/enable-ipv6", enableOCISubnetIPv6)
 
 	// Multi-Cloud Firewall Management APIs
-	// GCP Firewall
+	// GCP Firewall & Workspace
 	r.GET("/api/gcp/:account/firewalls", listGCPFirewalls)
 	r.POST("/api/gcp/:account/firewalls", createGCPFirewall)
 	r.PUT("/api/gcp/:account/firewalls/:name", updateGCPFirewall)
 	r.PATCH("/api/gcp/:account/firewalls/:name/toggle", toggleGCPFirewall)
 	r.DELETE("/api/gcp/:account/firewalls/:name", deleteGCPFirewall)
+	r.GET("/api/gcp/:account/create-options", getGCPCreateOptions)
+	r.POST("/api/gcp/:account/launch-instance", launchGCPInstance)
+	r.GET("/api/gcp/:account/resources", scanGCPResources)
+	r.POST("/api/gcp/:account/resources/cleanup", cleanupGCPResources)
 
 	// OCI Account Security Lists, NSGs & Route Tables (Account-level firewall & routing)
 	r.GET("/api/oci/:account/security-lists", listAccountOCISecurityLists)
@@ -155,18 +159,25 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 	r.DELETE("/api/oci/:account/os/buckets/:bucket/objects", deleteOCIObject)
 	r.POST("/api/oci/:account/os/buckets/:bucket/par", createOCIPAR)
 
-	// OCI Boot Volumes
+	// OCI Boot Volumes & Idle Resource Cleanup
 	r.GET("/api/vm/:provider/:account/:name/boot-volume", getOCIInstanceBootVolume)
 	r.GET("/api/oci/:account/boot-volumes", listOCIAccountBootVolumes)
 	r.PUT("/api/oci/:account/boot-volumes/:bootVolumeID", updateOCIBootVolume)
 	r.DELETE("/api/oci/:account/boot-volumes/:bootVolumeID", deleteOCIBootVolume)
 	r.POST("/api/oci/:account/boot-volumes/:bootVolumeID/attach", attachOCIBootVolume)
 	r.POST("/api/oci/:account/boot-volume-attachments/:attachmentID/detach", detachOCIBootVolume)
+	r.GET("/api/oci/:account/resources", scanOCIResources)
+	r.POST("/api/oci/:account/resources/cleanup", cleanupOCIResources)
 
 	// Azure NSG (Account-level firewall)
 	r.GET("/api/azure/:account/security-groups", listAzureNSGs)
 	r.POST("/api/azure/:account/security-groups/:nsg/rules", saveAzureNSGRule)
 	r.DELETE("/api/azure/:account/security-groups/:nsg/rules/:rule", deleteAzureNSGRule)
+
+	// Azure Create Instance & Default Network
+	r.GET("/api/azure/:account/create-options", getAzureCreateOptions)
+	r.POST("/api/azure/:account/default-network", createAzureDefaultNetwork)
+	r.POST("/api/azure/:account/launch-instance", launchAzureInstance)
 
 	// Azure Cost, Credit Monitor & Orphan Resource Cleanup
 	r.GET("/api/azure/:account/cost-overview", getAzureCostOverview)

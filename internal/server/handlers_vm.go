@@ -229,10 +229,12 @@ func primaryIPv6Address(vm map[string]interface{}) (string, bool) {
 	if ipv6s, ok := vm["ipv6s"].([]map[string]interface{}); ok {
 		for _, item := range ipv6s {
 			ip := strings.TrimSpace(fmt.Sprintf("%v", item["ipAddress"]))
-			if prefix, ok := item["cidrPrefixLength"].(int); ok && prefix != 0 && prefix != 128 {
-				continue
+			if canChange, _ := item["canChange"].(bool); !canChange {
+				if prefix, ok := item["cidrPrefixLength"].(int); ok && prefix != 0 && prefix != 128 {
+					continue
+				}
 			}
-			if ip != "" && ip != "<nil>" {
+			if ip != "" && ip != "<nil>" && !strings.Contains(ip, "/") {
 				return ip, true
 			}
 		}

@@ -23,7 +23,10 @@ import (
 	"time"
 )
 
-const gcpComputeBaseURL = "https://compute.googleapis.com/compute/v1"
+var (
+	gcpComputeBaseURL = "https://compute.googleapis.com/compute/v1"
+	gcpPollInterval   = 2 * time.Second
+)
 
 type GCPService struct {
 	Account  config.GCPConfig
@@ -92,80 +95,7 @@ func (g *GCPService) RestartVM(id string) error {
 }
 
 func (g *GCPService) ChangeIP(id string) (*provider.ChangeIPResult, error) {
-	zone, name, err := parseGCPID(id)
-	if err != nil {
-		return nil, err
-	}
-
-	instance, err := g.rawInstance(zone, name)
-	if err != nil {
-		return nil, err
-	}
-
-	nicName, accessConfigName, oldIP := g.firstNetworkAccessConfig(instance)
-	if nicName == "" {
-		return nil, fmt.Errorf("GCP instance %s has no network interface", name)
-	}
-	if accessConfigName == "" {
-		accessConfigName = "External NAT"
-	}
-
-	region := regionFromZone(zone)
-	oldAddressName := ""
-	logs := []string{}
-	if oldIP != "" {
-		oldAddressName = fmt.Sprintf("old-ip-%s-%d", strings.ToLower(name), time.Now().Unix())
-		logs = append(logs, fmt.Sprintf("[1/4] reserving current ephemeral IP as static: %s", oldIP))
-		if err := g.reserveStaticAddress(region, oldAddressName, oldIP); err != nil {
-			return nil, fmt.Errorf("reserve current IP failed: %w", err)
-		}
-
-		logs = append(logs, "[2/4] detaching old public IP from network interface")
-		if err := g.accessConfigAction(zone, name, "deleteAccessConfig", url.Values{
-			"networkInterface": {nicName},
-			"accessConfig":     {accessConfigName},
-		}, nil); err != nil {
-			return nil, fmt.Errorf("detach old public IP failed: %w", err)
-		}
-	} else {
-		logs = append(logs, "[1/4] no current public IP")
-		logs = append(logs, "[2/4] skip detach")
-	}
-
-	logs = append(logs, "[3/4] attaching a new ephemeral public IP")
-	if err := g.accessConfigAction(zone, name, "addAccessConfig", url.Values{
-		"networkInterface": {nicName},
-	}, map[string]interface{}{
-		"name":        accessConfigName,
-		"type":        "ONE_TO_ONE_NAT",
-		"networkTier": "PREMIUM",
-	}); err != nil {
-		return nil, fmt.Errorf("attach new public IP failed: %w", err)
-	}
-
-	newIP := ""
-	if updated, err := g.GetVM(id); err == nil {
-		if publicIP, ok := updated["publicIP"].(map[string]interface{}); ok {
-			newIP, _ = publicIP["ipAddress"].(string)
-		}
-	}
-	logs = append(logs, fmt.Sprintf("[3/4] new ephemeral public IP: %s", valueOrDefault(newIP, "pending")))
-
-	if oldAddressName != "" {
-		logs = append(logs, fmt.Sprintf("[4/4] deleting old static IP resource: %s", oldAddressName))
-		if err := g.deleteStaticAddress(region, oldAddressName); err != nil {
-			return nil, fmt.Errorf("delete old static IP failed: %w", err)
-		}
-	} else {
-		logs = append(logs, "[4/4] no old static IP resource to delete")
-	}
-
-	return &provider.ChangeIPResult{
-		Success:      true,
-		Message:      "IP changed",
-		NewIPAddress: newIP,
-		Logs:         logs,
-	}, nil
+	return g.ChangePrivateIPPublicIP(id, "")
 }
 
 func (g *GCPService) rawInstance(zone, name string) (map[string]interface{}, error) {
@@ -250,7 +180,9 @@ func (g *GCPService) normalizeVM(instance map[string]interface{}) map[string]int
 		}
 	}
 
-	return map[string]interface{}{
+	ipv6Entries := extractGCPIPv6Entries(instance)
+
+	out := map[string]interface{}{
 		"provider":      "gcp",
 		"accountId":     g.Account.Name,
 		"group":         g.Account.Group,
@@ -264,6 +196,51 @@ func (g *GCPService) normalizeVM(instance map[string]interface{}) map[string]int
 		"publicIP":      publicIP,
 		"resourceGroup": g.Account.ProjectID,
 	}
+	if len(ipv6Entries) > 0 {
+		out["ipv6s"] = ipv6Entries
+		if addr, ok := ipv6Entries[0]["ipAddress"].(string); ok && addr != "" {
+			out["ipv6"] = addr
+		}
+	}
+	return out
+}
+
+func extractGCPIPv6Entries(instance map[string]interface{}) []map[string]interface{} {
+	networkInterfaces, ok := instance["networkInterfaces"].([]interface{})
+	if !ok {
+		return nil
+	}
+	entries := make([]map[string]interface{}, 0)
+	for idx, rawNIC := range networkInterfaces {
+		nic, ok := rawNIC.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		nicName := valueOrDefault(stringValue(nic["name"]), fmt.Sprintf("nic%d", idx))
+		if v6Configs, ok := nic["ipv6AccessConfigs"].([]interface{}); ok {
+			for cfgIdx, rawCfg := range v6Configs {
+				cfg, ok := rawCfg.(map[string]interface{})
+				if !ok {
+					continue
+				}
+				extIPv6 := strings.TrimSpace(stringValue(cfg["externalIpv6"]))
+				if extIPv6 == "" {
+					continue
+				}
+				prefixLen := 96
+				if p, ok := cfg["externalIpv6PrefixLength"].(float64); ok && p > 0 {
+					prefixLen = int(p)
+				}
+				entries = append(entries, map[string]interface{}{
+					"id":               fmt.Sprintf("%s|ipv6|%d", nicName, cfgIdx),
+					"ipAddress":        extIPv6,
+					"cidrPrefixLength": prefixLen,
+					"canChange":        true,
+				})
+			}
+		}
+	}
+	return entries
 }
 
 func (g *GCPService) firstNetworkAccessConfig(instance map[string]interface{}) (string, string, string) {
@@ -359,7 +336,7 @@ func (g *GCPService) waitOperation(operation map[string]interface{}) error {
 		if stringValue(latest["status"]) == "DONE" {
 			return g.operationError(latest)
 		}
-		time.Sleep(2 * time.Second)
+		time.Sleep(gcpPollInterval)
 	}
 	return fmt.Errorf("GCP operation %s timed out", name)
 }

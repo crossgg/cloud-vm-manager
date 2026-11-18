@@ -615,3 +615,40 @@ func deleteOCIBootVolume(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+func scanOCIResources(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	res, err := ociSvc.ScanIdleResources()
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, res)
+}
+
+func cleanupOCIResources(c *gin.Context) {
+	ociSvc, ok := getOCIAccountService(c)
+	if !ok {
+		return
+	}
+	var payload struct {
+		ResourceIDs []string `json:"resourceIds"`
+	}
+	if err := c.ShouldBindJSON(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if len(payload.ResourceIDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "请至少选择一项要清理的资源"})
+		return
+	}
+	deleted, errs := ociSvc.CleanupIdleResources(payload.ResourceIDs)
+	c.JSON(http.StatusOK, gin.H{
+		"success": len(errs) == 0,
+		"deleted": deleted,
+		"errors":  errs,
+	})
+}

@@ -80,3 +80,61 @@ func deleteAzureNSGRule(c *gin.Context) {
 	}
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
+
+func getAzureCreateOptions(c *gin.Context) {
+	azSvc, ok := getAzureService(c)
+	if !ok {
+		return
+	}
+	location := c.Query("location")
+	opts, err := azSvc.GetCreateOptions(location)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, opts)
+}
+
+func createAzureDefaultNetwork(c *gin.Context) {
+	azSvc, ok := getAzureService(c)
+	if !ok {
+		return
+	}
+	var req azure.AzureDefaultNetworkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	res, logs, err := azSvc.CreateDefaultNetwork(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "logs": logs})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"network": res,
+		"logs":    logs,
+	})
+}
+
+func launchAzureInstance(c *gin.Context) {
+	azSvc, ok := getAzureService(c)
+	if !ok {
+		return
+	}
+	var req azure.AzureLaunchInstanceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	vm, logs, err := azSvc.LaunchInstance(req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error(), "logs": logs})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{
+		"success": true,
+		"vm":      vm,
+		"logs":    logs,
+	})
+}
