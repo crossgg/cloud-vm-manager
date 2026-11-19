@@ -44,15 +44,15 @@ func getAccountDetail(c *gin.Context) {
 		found := false
 		for _, acc := range cfg.AzureAccounts {
 			if strings.EqualFold(acc.Name, accountName) {
-				fields["tenant_id"] = acc.TenantId
-				fields["client_id"] = acc.ClientId
+				fields["tenant_id"] = maskAccountMiddle(acc.TenantId)
+				fields["client_id"] = maskAccountMiddle(acc.ClientId)
 				if acc.ClientSecret != "" {
 					fields["client_secret"] = accountSecretMask
 					hasClientSecret = true
 				} else {
 					fields["client_secret"] = ""
 				}
-				fields["subscription_id"] = acc.SubId
+				fields["subscription_id"] = maskAccountMiddle(acc.SubId)
 				fields["resource_group"] = acc.ResourceGroup
 				fields["location"] = acc.Location
 				group = acc.Group
@@ -61,15 +61,15 @@ func getAccountDetail(c *gin.Context) {
 			}
 		}
 		if !found && (accountName == "default" || accountName == "azure") && cfg.Azure.TenantId != "" {
-			fields["tenant_id"] = cfg.Azure.TenantId
-			fields["client_id"] = cfg.Azure.ClientId
+			fields["tenant_id"] = maskAccountMiddle(cfg.Azure.TenantId)
+			fields["client_id"] = maskAccountMiddle(cfg.Azure.ClientId)
 			if cfg.Azure.ClientSecret != "" {
 				fields["client_secret"] = accountSecretMask
 				hasClientSecret = true
 			} else {
 				fields["client_secret"] = ""
 			}
-			fields["subscription_id"] = cfg.Azure.SubId
+			fields["subscription_id"] = maskAccountMiddle(cfg.Azure.SubId)
 			fields["resource_group"] = cfg.Azure.ResourceGroup
 			fields["location"] = cfg.Azure.Location
 			group = cfg.Azure.Group
@@ -84,12 +84,12 @@ func getAccountDetail(c *gin.Context) {
 		found := false
 		for _, acc := range cfg.OCIAccounts {
 			if strings.EqualFold(acc.Name, accountName) {
-				fields["user"] = acc.User
-				fields["fingerprint"] = acc.Fingerprint
-				fields["tenancy"] = acc.Tenancy
-				fields["compartment_id"] = acc.CompartmentID
+				fields["user"] = maskAccountMiddle(acc.User)
+				fields["fingerprint"] = maskAccountMiddle(acc.Fingerprint)
+				fields["tenancy"] = maskAccountMiddle(acc.Tenancy)
+				fields["compartment_id"] = maskAccountMiddle(acc.CompartmentID)
 				fields["region"] = acc.Region
-				fields["key_file"] = acc.KeyFile
+				fields["key_file"] = maskAccountMiddle(acc.KeyFile)
 				group = acc.Group
 				found = true
 				break
@@ -104,9 +104,9 @@ func getAccountDetail(c *gin.Context) {
 		found := false
 		for _, acc := range cfg.GCPAccounts {
 			if strings.EqualFold(acc.Name, accountName) {
-				fields["project_id"] = acc.ProjectID
-				fields["client_email"] = acc.ClientEmail
-				fields["key_file"] = acc.KeyFile
+				fields["project_id"] = maskAccountMiddle(acc.ProjectID)
+				fields["client_email"] = maskAccountMiddle(acc.ClientEmail)
+				fields["key_file"] = maskAccountMiddle(acc.KeyFile)
 				group = acc.Group
 				found = true
 				break
@@ -184,16 +184,7 @@ func saveAccount(c *gin.Context) {
 	}
 
 	origAccount := strings.TrimSpace(payload.OriginalAccount)
-	if provider == "azure" {
-		secret := strings.TrimSpace(payload.Fields["client_secret"])
-		if secret == "" || secret == accountSecretMask || strings.Contains(secret, "***") {
-			if existingSecret := findExistingAzureSecret(origAccount, account); existingSecret != "" {
-				payload.Fields["client_secret"] = existingSecret
-			} else if secret == accountSecretMask {
-				payload.Fields["client_secret"] = ""
-			}
-		}
-	}
+	restoreMaskedAccountFields(provider, origAccount, account, payload.Fields)
 	if (provider == "oci" || provider == "gcp") && strings.TrimSpace(payload.Fields["key_file"]) != "" {
 		validatedKeyPath, err := validateAccountKeyFilePath(payload.Fields["key_file"])
 		if err != nil {
@@ -410,27 +401,120 @@ func validateAccountKeyFilePath(rawPath string) (string, error) {
 	return filepath.ToSlash(trimmed), nil
 }
 
-func findExistingAzureSecret(origAccount, account string) string {
+func maskAccountMiddle(raw string) string {
+	val := strings.TrimSpace(raw)
+	if val == "" {
+		return ""
+	}
+	runes := []rune(val)
+	n := len(runes)
+	if n <= 4 {
+		return "****"
+	}
+	keep := 2
+	switch {
+	case n > 16:
+		keep = 6
+	case n > 8:
+		keep = 4
+	}
+	return string(runes[:keep]) + "****" + string(runes[n-keep:])
+}
+
+func restoreMaskedAccountFields(provider, origAccount, account string, fields map[string]string) {
+	existing := findExistingAccountFields(provider, origAccount, account)
+	if len(existing) == 0 {
+		if provider == "azure" && strings.TrimSpace(fields["client_secret"]) == accountSecretMask {
+			fields["client_secret"] = ""
+		}
+		return
+	}
+	if provider == "azure" {
+		secret := strings.TrimSpace(fields["client_secret"])
+		if secret == "" || secret == accountSecretMask || strings.Contains(secret, "***") {
+			if existingSecret := existing["client_secret"]; existingSecret != "" {
+				fields["client_secret"] = existingSecret
+			} else if secret == accountSecretMask {
+				fields["client_secret"] = ""
+			}
+		}
+	}
+	var maskedKeys []string
+	switch provider {
+	case "azure":
+		maskedKeys = []string{"tenant_id", "client_id", "subscription_id"}
+	case "oci":
+		maskedKeys = []string{"user", "fingerprint", "tenancy", "compartment_id", "key_file"}
+	case "gcp":
+		maskedKeys = []string{"project_id", "client_email", "key_file"}
+	}
+	for _, k := range maskedKeys {
+		origVal := existing[k]
+		if origVal == "" {
+			continue
+		}
+		if strings.TrimSpace(fields[k]) == maskAccountMiddle(origVal) {
+			fields[k] = origVal
+		}
+	}
+}
+
+func findExistingAccountFields(provider, origAccount, account string) map[string]string {
 	lookupName := origAccount
 	if lookupName == "" {
 		lookupName = account
 	}
 	if lookupName == "" {
-		return ""
+		return nil
 	}
 	runtimeState.mu.RLock()
 	cfg := runtimeState.cfg
 	runtimeState.mu.RUnlock()
 	if cfg == nil {
-		return ""
+		return nil
 	}
-	for _, acc := range cfg.AzureAccounts {
-		if strings.EqualFold(acc.Name, lookupName) {
-			return acc.ClientSecret
+	switch provider {
+	case "azure":
+		for _, acc := range cfg.AzureAccounts {
+			if strings.EqualFold(acc.Name, lookupName) {
+				return map[string]string{
+					"tenant_id":       acc.TenantId,
+					"client_id":       acc.ClientId,
+					"client_secret":   acc.ClientSecret,
+					"subscription_id": acc.SubId,
+				}
+			}
+		}
+		if (lookupName == "default" || lookupName == "azure") && cfg.Azure.TenantId != "" {
+			return map[string]string{
+				"tenant_id":       cfg.Azure.TenantId,
+				"client_id":       cfg.Azure.ClientId,
+				"client_secret":   cfg.Azure.ClientSecret,
+				"subscription_id": cfg.Azure.SubId,
+			}
+		}
+	case "oci":
+		for _, acc := range cfg.OCIAccounts {
+			if strings.EqualFold(acc.Name, lookupName) {
+				return map[string]string{
+					"user":           acc.User,
+					"fingerprint":    acc.Fingerprint,
+					"tenancy":        acc.Tenancy,
+					"compartment_id": acc.CompartmentID,
+					"key_file":       acc.KeyFile,
+				}
+			}
+		}
+	case "gcp":
+		for _, acc := range cfg.GCPAccounts {
+			if strings.EqualFold(acc.Name, lookupName) {
+				return map[string]string{
+					"project_id":   acc.ProjectID,
+					"client_email": acc.ClientEmail,
+					"key_file":     acc.KeyFile,
+				}
+			}
 		}
 	}
-	if (lookupName == "default" || lookupName == "azure") && cfg.Azure.ClientSecret != "" {
-		return cfg.Azure.ClientSecret
-	}
-	return ""
+	return nil
 }

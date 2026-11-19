@@ -1297,198 +1297,226 @@
               <p id="notify-config-summary">正在读取通知配置...</p>
             </div>
             <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button id="notify-open-logs-btn" class="secondary-btn" type="button">
+                <i class="bi bi-clock-history"></i>
+                <span>推送记录</span>
+              </button>
               <button id="notify-refresh-btn" class="secondary-btn" type="button">
                 <i class="bi bi-arrow-clockwise"></i>
                 <span>刷新状态</span>
               </button>
-              <button id="notify-save-all-btn" class="primary-btn" type="button">
-                <i class="bi bi-check2-circle"></i>
-                <span>保存全部配置</span>
-              </button>
             </div>
           </div>
 
-          <div id="notify-global-message" class="form-message"></div>
-
-          <div class="settings-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>全局通知触发点（手动开关）</h3>
-                <p>仅已勾选的触发点才会向通知渠道或交互式 Bot 派发消息。</p>
-              </div>
-            </div>
-            <div id="notify-global-events" class="notify-trigger-grid"></div>
+          <div id="notify-workspace-tabs" class="oci-workspace-tabs">
+            <button type="button" class="oci-ws-tab active" data-notify-tab="triggers">
+              <i class="bi bi-toggles"></i>
+              <span>全局通知触发点</span>
+            </button>
+            <button type="button" class="oci-ws-tab" data-notify-tab="bot">
+              <i class="bi bi-telegram"></i>
+              <span>交互式 Telegram Bot</span>
+            </button>
+            <button type="button" class="oci-ws-tab" data-notify-tab="channels">
+              <i class="bi bi-send-check"></i>
+              <span>单向通知渠道</span>
+            </button>
           </div>
 
-          <div class="settings-panel">
-            <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
-              <div>
-                <h3>交互式 Telegram Bot</h3>
-                <p>支持 HTTP / SOCKS5 代理长轮询。支持 /help、/oracle、/azure、/gcp（查看、开关机重启、换 IP、OCI 抢购启停、日志查看）。</p>
+          <!-- Tab 1: 全局通知触发点 -->
+          <div id="notify-tab-triggers" class="notify-tab-pane">
+            <div class="settings-panel">
+              <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
+                <div>
+                  <h3>全局通知触发点（手动开关）</h3>
+                  <p>仅已勾选的触发点才会向单向通知渠道或交互式 Bot 派发消息。</p>
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                  <button id="notify-triggers-select-all-btn" class="ghost-btn" type="button">全选</button>
+                  <button id="notify-triggers-default-btn" class="ghost-btn" type="button">恢复推荐</button>
+                </div>
               </div>
-              <span id="tg-bot-status-badge" class="notify-badge">未启用</span>
+              <div id="notify-global-events" class="notify-trigger-grid"></div>
+              <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;">
+                <button id="notify-save-triggers-btn" class="primary-btn" type="button">
+                  <i class="bi bi-check2-circle"></i>
+                  <span>保存触发点配置</span>
+                </button>
+              </div>
+              <div id="notify-triggers-message" class="form-message"></div>
             </div>
-            <div id="tg-bot-status-meta" class="notify-meta-line"></div>
-
-            <div class="notify-form-grid">
-              <label class="switch-row">
-                <input id="tg-bot-enabled" type="checkbox">
-                <span>启用交互式 Telegram Bot</span>
-              </label>
-              <label class="switch-row">
-                <input id="tg-bot-auto-notify" type="checkbox">
-                <span>配置后自动接收触发点通知</span>
-              </label>
-            </div>
-
-            <div class="form-grid">
-              <label class="field">
-                <span>Bot Token</span>
-                <input id="tg-bot-token" type="password" autocomplete="off" placeholder="123456:ABC-DEF...">
-              </label>
-              <label class="field">
-                <span>API Host（可选反代地址）</span>
-                <input id="tg-bot-api-host" type="text" placeholder="https://api.telegram.org">
-              </label>
-              <label class="field">
-                <span>代理节点（来自代理池）</span>
-                <select id="tg-bot-proxy"></select>
-              </label>
-              <label class="field">
-                <span>备用 Fallback 策略</span>
-                <select id="tg-bot-fallback"></select>
-              </label>
-              <label class="field">
-                <span>允许交互的 User ID（逗号分隔）</span>
-                <input id="tg-bot-allowed-users" type="text" placeholder="例如: 123456789,987654321">
-              </label>
-              <label class="field">
-                <span>允许交互的 Chat ID（逗号分隔，可留空）</span>
-                <input id="tg-bot-allowed-chats" type="text" placeholder="私聊可留空；群聊填 -100xxxx">
-              </label>
-              <label class="field">
-                <span>自动通知接收 Chat ID（留空默认发往白名单）</span>
-                <input id="tg-bot-notify-chats" type="text" placeholder="留空则使用允许的 Chat/User ID">
-              </label>
-              <label class="field">
-                <span>周期告警冷却时间（秒）</span>
-                <input id="tg-bot-notify-cooldown" type="number" min="0" step="10" value="300">
-              </label>
-            </div>
-
-            <div class="field" style="margin-top: 10px;">
-              <span>Bot 自动接收的触发点</span>
-              <div id="tg-bot-notify-events" class="notify-trigger-grid compact"></div>
-            </div>
-
-            <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 12px;">
-              <button id="tg-bot-test-conn-btn" class="secondary-btn" type="button">
-                <i class="bi bi-wifi"></i>
-                <span>测试 Bot 连通性</span>
-              </button>
-              <button id="tg-bot-test-send-btn" class="secondary-btn" type="button">
-                <i class="bi bi-send"></i>
-                <span>发送测试消息</span>
-              </button>
-            </div>
-            <div id="tg-bot-message" class="form-message"></div>
           </div>
 
-          <div class="settings-panel">
-            <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
-              <div>
-                <h3>单向通知渠道（参考 webhook-notify）</h3>
-                <p>支持 Bark、企业微信机器人、企业微信应用、飞书、Telegram、PushPlus、自定义 Webhook，均可独立绑定代理和触发点。</p>
+          <!-- Tab 2: 交互式 Telegram Bot -->
+          <div id="notify-tab-bot" class="notify-tab-pane" hidden>
+            <div class="settings-panel">
+              <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap;">
+                <div>
+                  <h3>交互式 Telegram Bot</h3>
+                  <p>支持 HTTP / SOCKS5 代理长轮询。支持 /help、/oracle、/azure、/gcp（查看、开关机重启、换 IP、OCI 抢购启停、日志查看）。</p>
+                </div>
+                <span id="tg-bot-status-badge" class="notify-badge">未启用</span>
               </div>
-              <button id="notify-new-channel-btn" class="secondary-btn" type="button">
-                <i class="bi bi-plus-lg"></i>
-                <span>新增渠道</span>
-              </button>
-            </div>
+              <div id="tg-bot-status-meta" class="notify-meta-line"></div>
 
-            <div id="notify-channels-list" class="notify-channels-list">
-              <div class="empty-state compact">暂无通知渠道。</div>
-            </div>
-
-            <form id="notify-channel-form" class="notify-channel-editor">
-              <input id="notify-ch-id" type="hidden">
-              <div class="panel-heading">
-                <div><h4 id="notify-ch-editor-title">添加通知渠道</h4></div>
+              <div class="notify-form-grid">
+                <label class="switch-row">
+                  <input id="tg-bot-enabled" type="checkbox">
+                  <span>启用交互式 Telegram Bot</span>
+                </label>
+                <label class="switch-row">
+                  <input id="tg-bot-auto-notify" type="checkbox">
+                  <span>配置后自动接收触发点通知</span>
+                </label>
               </div>
+
               <div class="form-grid">
                 <label class="field">
-                  <span>渠道名称</span>
-                  <input id="notify-ch-name" type="text" placeholder="例如：iPhone Bark / 飞书运维群" required>
+                  <span>Bot Token</span>
+                  <input id="tg-bot-token" type="password" autocomplete="off" placeholder="123456:ABC-DEF...">
                 </label>
                 <label class="field">
-                  <span>渠道类型</span>
-                  <select id="notify-ch-type">
-                    <option value="bark">Bark (bark)</option>
-                    <option value="wecom_bot">企业微信机器人 (wecom_bot)</option>
-                    <option value="wecom_app">企业微信应用 (wecom_app)</option>
-                    <option value="feishu">飞书机器人 (feishu)</option>
-                    <option value="telegram">Telegram 单向推送 (telegram)</option>
-                    <option value="pushplus">PushPlus (pushplus)</option>
-                    <option value="custom">自定义 Webhook (custom)</option>
-                  </select>
+                  <span>API Host（可选反代地址）</span>
+                  <input id="tg-bot-api-host" type="text" placeholder="https://api.telegram.org">
                 </label>
                 <label class="field">
-                  <span>代理节点</span>
-                  <select id="notify-ch-proxy"></select>
+                  <span>代理节点（来自代理池）</span>
+                  <select id="tg-bot-proxy"></select>
                 </label>
                 <label class="field">
-                  <span>备用 Fallback</span>
-                  <select id="notify-ch-fallback"></select>
+                  <span>备用 Fallback 策略</span>
+                  <select id="tg-bot-fallback"></select>
                 </label>
                 <label class="field">
-                  <span>冷却时间（秒，防重复告警）</span>
-                  <input id="notify-ch-cooldown" type="number" min="0" step="10" value="300">
+                  <span>允许交互的 User ID（逗号分隔）</span>
+                  <input id="tg-bot-allowed-users" type="text" placeholder="例如: 123456789,987654321">
                 </label>
                 <label class="field">
-                  <span>账号过滤（可选，逗号分隔，如 oci/shuai-jp）</span>
-                  <input id="notify-ch-accounts" type="text" placeholder="留空表示匹配全部账号">
+                  <span>允许交互的 Chat ID（逗号分隔，可留空）</span>
+                  <input id="tg-bot-allowed-chats" type="text" placeholder="私聊可留空；群聊填 -100xxxx">
+                </label>
+                <label class="field">
+                  <span>自动通知接收 Chat ID（留空默认发往白名单）</span>
+                  <input id="tg-bot-notify-chats" type="text" placeholder="留空则使用允许的 Chat/User ID">
+                </label>
+                <label class="field">
+                  <span>周期告警冷却时间（秒）</span>
+                  <input id="tg-bot-notify-cooldown" type="number" min="0" step="10" value="300">
                 </label>
               </div>
 
-              <label class="switch-row" style="margin-top: 8px;">
-                <input id="notify-ch-enabled" type="checkbox" checked>
-                <span>启用此通知渠道</span>
-              </label>
-
-              <div class="field" style="margin-top: 8px;">
-                <span>订阅触发点</span>
-                <div id="notify-ch-events" class="notify-trigger-grid compact"></div>
+              <div class="field" style="margin-top: 12px;">
+                <span>Bot 自动接收的触发点</span>
+                <div id="tg-bot-notify-events" class="notify-trigger-grid compact"></div>
               </div>
 
-              <div id="notify-ch-params" class="form-grid" style="margin-top: 10px;"></div>
-
-              <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px;">
-                <button class="primary-btn" type="submit">
-                  <i class="bi bi-save"></i>
-                  <span>保存渠道并应用</span>
+              <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;">
+                <button id="notify-save-bot-btn" class="primary-btn" type="button">
+                  <i class="bi bi-check2-circle"></i>
+                  <span>保存 Bot 配置</span>
                 </button>
-                <button id="notify-ch-test-btn" class="secondary-btn" type="button">
+                <button id="tg-bot-test-conn-btn" class="secondary-btn" type="button">
+                  <i class="bi bi-wifi"></i>
+                  <span>测试连通性</span>
+                </button>
+                <button id="tg-bot-test-send-btn" class="secondary-btn" type="button">
                   <i class="bi bi-send"></i>
-                  <span>测试发送</span>
+                  <span>发送测试消息</span>
                 </button>
-                <button id="notify-ch-reset-btn" class="ghost-btn" type="button">重置表单</button>
               </div>
-              <div id="notify-ch-message" class="form-message"></div>
-            </form>
+              <div id="tg-bot-message" class="form-message"></div>
+            </div>
           </div>
 
-          <div class="settings-panel">
-            <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: center;">
-              <div>
-                <h3>最近推送记录</h3>
-                <p>展示内存缓冲中的最近通知派发结果，便于排查网络或代理问题。</p>
+          <!-- Tab 3: 单向通知渠道（左侧竖向标签 + 右侧详情） -->
+          <div id="notify-tab-channels" class="notify-tab-pane" hidden>
+            <div class="settings-panel notify-channels-shell">
+              <div class="notify-channels-layout">
+                <aside class="notify-channels-rail">
+                  <button id="notify-new-channel-btn" class="primary-btn notify-new-ch-btn" type="button">
+                    <i class="bi bi-plus-lg"></i>
+                    <span>新增渠道</span>
+                  </button>
+                  <div id="notify-channels-tabs" class="notify-vertical-tabs">
+                    <div class="empty-state compact">暂无渠道</div>
+                  </div>
+                </aside>
+
+                <div class="notify-channels-detail">
+                  <form id="notify-channel-form" class="notify-channel-editor-pane">
+                    <input id="notify-ch-id" type="hidden">
+                    <div class="panel-heading" style="display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap;">
+                      <div>
+                        <h3 id="notify-ch-editor-title">添加通知渠道</h3>
+                        <p>支持 Bark、企微机器人、企微应用、飞书、Telegram、PushPlus、自定义 Webhook，均可独立绑定代理。</p>
+                      </div>
+                      <button id="notify-ch-delete-btn" class="ghost-btn" type="button" style="color: var(--red);" hidden>
+                        <i class="bi bi-trash"></i>
+                        <span>删除渠道</span>
+                      </button>
+                    </div>
+
+                    <div class="form-grid">
+                      <label class="field">
+                        <span>渠道名称 *</span>
+                        <input id="notify-ch-name" type="text" placeholder="例如：iPhone Bark / 飞书运维群" required>
+                      </label>
+                      <label class="field">
+                        <span>渠道类型</span>
+                        <select id="notify-ch-type">
+                          <option value="bark">Bark (bark)</option>
+                          <option value="wecom_bot">企业微信机器人 (wecom_bot)</option>
+                          <option value="wecom_app">企业微信应用 (wecom_app)</option>
+                          <option value="feishu">飞书机器人 (feishu)</option>
+                          <option value="telegram">Telegram 单向推送 (telegram)</option>
+                          <option value="pushplus">PushPlus (pushplus)</option>
+                          <option value="custom">自定义 Webhook (custom)</option>
+                        </select>
+                      </label>
+                      <label class="field">
+                        <span>代理节点</span>
+                        <select id="notify-ch-proxy"></select>
+                      </label>
+                      <label class="field">
+                        <span>备用 Fallback</span>
+                        <select id="notify-ch-fallback"></select>
+                      </label>
+                      <label class="field">
+                        <span>冷却时间（秒，防重复告警）</span>
+                        <input id="notify-ch-cooldown" type="number" min="0" step="10" value="300">
+                      </label>
+                      <label class="field">
+                        <span>账号过滤（可选，逗号分隔，如 oci/shuai-jp）</span>
+                        <input id="notify-ch-accounts" type="text" placeholder="留空表示匹配全部账号">
+                      </label>
+                    </div>
+
+                    <label class="switch-row" style="margin-top: 8px;">
+                      <input id="notify-ch-enabled" type="checkbox" checked>
+                      <span>启用此通知渠道</span>
+                    </label>
+
+                    <div class="field" style="margin-top: 10px;">
+                      <span>订阅触发点</span>
+                      <div id="notify-ch-events" class="notify-trigger-grid compact"></div>
+                    </div>
+
+                    <div id="notify-ch-params" class="form-grid" style="margin-top: 12px;"></div>
+
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;">
+                      <button class="primary-btn" type="submit">
+                        <i class="bi bi-save"></i>
+                        <span>保存此渠道</span>
+                      </button>
+                      <button id="notify-ch-test-btn" class="secondary-btn" type="button">
+                        <i class="bi bi-send"></i>
+                        <span>测试发送</span>
+                      </button>
+                    </div>
+                    <div id="notify-ch-message" class="form-message"></div>
+                  </form>
+                </div>
               </div>
-              <button id="notify-logs-refresh-btn" class="ghost-btn" type="button">
-                <i class="bi bi-arrow-clockwise"></i>
-              </button>
-            </div>
-            <div id="notify-logs-list" class="notify-logs-list">
-              <div class="empty-state compact">暂无推送记录。</div>
             </div>
           </div>
         </section>
@@ -2438,6 +2466,7 @@
           <!-- Hidden file input for uploads -->
           <input type="file" id="key-file-hidden-input" style="display: none;" accept=".pem,.key,.json">
 
+          <p class="notify-meta-line" style="margin: 8px 0 0;">注：编辑时带 <code>****</code> 的脱敏字段若未修改将自动保留原有配置，无需重复填写。</p>
           <div id="account-modal-message" class="form-message"></div>
         </div>
         <div class="modal-footer">
@@ -2445,6 +2474,29 @@
           <button id="account-modal-submit" class="primary-btn" type="submit">保存云账号</button>
         </div>
       </form>
+    </div>
+  </div>
+
+  <!-- Notification Delivery Logs Modal -->
+  <div id="notify-logs-modal" class="modal-overlay" hidden>
+    <div class="modal-panel" style="width: min(720px, 95vw);">
+      <div class="modal-header">
+        <h3>最近推送记录</h3>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <button id="notify-logs-refresh-btn" class="ghost-btn" type="button" title="刷新记录">
+            <i class="bi bi-arrow-clockwise"></i>
+          </button>
+          <button id="notify-logs-modal-close" class="ghost-btn" type="button">✕</button>
+        </div>
+      </div>
+      <div class="modal-body" style="max-height: 68vh; overflow-y: auto;">
+        <div id="notify-logs-list" class="notify-logs-list">
+          <div class="empty-state compact">暂无推送记录。</div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="notify-logs-modal-done" class="secondary-btn" type="button">关闭</button>
+      </div>
     </div>
   </div>
 

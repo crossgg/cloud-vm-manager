@@ -6,7 +6,9 @@ let notifyState = {
   proxies: [],
   botStatus: {},
   logs: [],
-  editingChannelId: '',
+  activeTab: 'triggers',
+  selectedChannelId: '',
+  creatingChannel: false,
   bound: false,
 };
 
@@ -55,20 +57,65 @@ function bindNotifyEventsOnce() {
   notifyState.bound = true;
 
   document.getElementById('notify-refresh-btn')?.addEventListener('click', () => loadNotifyPage());
-  document.getElementById('notify-save-all-btn')?.addEventListener('click', () => saveNotifyAllConfig());
+  document.getElementById('notify-open-logs-btn')?.addEventListener('click', openNotifyLogsModal);
+  document.getElementById('notify-logs-modal-close')?.addEventListener('click', closeNotifyLogsModal);
+  document.getElementById('notify-logs-modal-done')?.addEventListener('click', closeNotifyLogsModal);
+  document.getElementById('notify-logs-modal')?.addEventListener('click', (e) => {
+    if (e.target.id === 'notify-logs-modal') closeNotifyLogsModal();
+  });
+  document.getElementById('notify-logs-refresh-btn')?.addEventListener('click', () => refreshNotifyLogs());
+
+  document.getElementById('notify-workspace-tabs')?.addEventListener('click', (e) => {
+    const tabBtn = e.target.closest('[data-notify-tab]');
+    if (!tabBtn) return;
+    switchNotifyTab(tabBtn.dataset.notifyTab);
+  });
+
+  // Tab 1: Triggers
+  document.getElementById('notify-triggers-select-all-btn')?.addEventListener('click', () => {
+    document.querySelectorAll('.notify-global-ev-cb').forEach(cb => { cb.checked = true; });
+  });
+  document.getElementById('notify-triggers-default-btn')?.addEventListener('click', () => {
+    const defMap = new Map(notifyState.eventDefs.map(d => [d.id, !!d.defaultOn]));
+    document.querySelectorAll('.notify-global-ev-cb').forEach(cb => {
+      cb.checked = !!defMap.get(cb.value);
+    });
+  });
+  document.getElementById('notify-save-triggers-btn')?.addEventListener('click', () => saveTriggersOnly());
+
+  // Tab 2: Telegram Bot
+  document.getElementById('notify-save-bot-btn')?.addEventListener('click', () => saveTelegramBotOnly());
   document.getElementById('tg-bot-test-conn-btn')?.addEventListener('click', () => testTelegramBot(false));
   document.getElementById('tg-bot-test-send-btn')?.addEventListener('click', () => testTelegramBot(true));
-  document.getElementById('notify-new-channel-btn')?.addEventListener('click', () => resetNotifyChannelForm());
-  document.getElementById('notify-ch-reset-btn')?.addEventListener('click', () => resetNotifyChannelForm());
+
+  // Tab 3: One-way Channels (vertical rail + right editor)
+  document.getElementById('notify-new-channel-btn')?.addEventListener('click', () => startNewNotifyChannel());
+  document.getElementById('notify-channels-tabs')?.addEventListener('click', (e) => {
+    const btn = e.target.closest('.notify-vtab[data-channel-id]');
+    if (!btn) return;
+    selectNotifyChannel(btn.dataset.channelId);
+  });
   document.getElementById('notify-ch-type')?.addEventListener('change', () => renderChannelParamFields({}));
   document.getElementById('notify-channel-form')?.addEventListener('submit', saveNotifyChannelFromForm);
   document.getElementById('notify-ch-test-btn')?.addEventListener('click', () => testNotifyChannelFromForm());
-  document.getElementById('notify-channels-list')?.addEventListener('click', handleNotifyChannelListClick);
-  document.getElementById('notify-logs-refresh-btn')?.addEventListener('click', () => refreshNotifyLogs());
+  document.getElementById('notify-ch-delete-btn')?.addEventListener('click', () => deleteSelectedNotifyChannel());
+}
+
+function switchNotifyTab(tabName) {
+  if (!['triggers', 'bot', 'channels'].includes(tabName)) tabName = 'triggers';
+  notifyState.activeTab = tabName;
+
+  document.querySelectorAll('#notify-workspace-tabs [data-notify-tab]').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.notifyTab === tabName);
+  });
+  document.querySelectorAll('#notify-section .notify-tab-pane').forEach(pane => {
+    pane.hidden = pane.id !== `notify-tab-${tabName}`;
+  });
 }
 
 async function loadNotifyPage() {
   bindNotifyEventsOnce();
+  switchNotifyTab(notifyState.activeTab || 'triggers');
   try {
     const data = await fetchJSON('/api/notify/config');
     notifyState.config = data.config || {};
@@ -79,18 +126,17 @@ async function loadNotifyPage() {
 
     const summaryEl = document.getElementById('notify-config-summary');
     if (summaryEl) {
-      summaryEl.textContent = `配置文件：${data.configPath || 'config/notify.conf'} | 已配置渠道：${(notifyState.config.channels || []).length} 个`;
+      const chCount = (notifyState.config.channels || []).length;
+      const evCount = (notifyState.config.enabledEvents || []).length;
+      summaryEl.textContent = `配置文件：${data.configPath || 'config/notify.conf'} | 已开启触发点：${evCount} 个 | 单向渠道：${chCount} 个`;
     }
 
     renderGlobalEventCheckboxes();
     renderTelegramBotPanel();
-    renderNotifyChannelsList();
-    if (!notifyState.editingChannelId) {
-      resetNotifyChannelForm();
-    }
+    syncChannelSelectionAfterLoad();
     renderNotifyLogs();
   } catch (err) {
-    setNotifyMessage('notify-global-message', `加载通知配置失败: ${err.message}`, 'error');
+    setNotifyMessage('notify-triggers-message', `加载通知配置失败: ${err.message}`, 'error');
   }
 }
 
@@ -204,26 +250,50 @@ function collectGlobalEvents() {
   return Array.from(document.querySelectorAll('.notify-global-ev-cb:checked')).map(el => el.value);
 }
 
-async function saveNotifyAllConfig(msgTargetId = 'notify-global-message') {
+async function persistNotifyPayload(payload, msgTargetId, successText) {
+  const res = await fetchJSON('/api/notify/config', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  notifyState.config = res.config || payload;
+  notifyState.botStatus = res.botStatus || {};
+  const summaryEl = document.getElementById('notify-config-summary');
+  if (summaryEl) {
+    const chCount = (notifyState.config.channels || []).length;
+    const evCount = (notifyState.config.enabledEvents || []).length;
+    summaryEl.textContent = `配置文件：config/notify.conf | 已开启触发点：${evCount} 个 | 单向渠道：${chCount} 个`;
+  }
+  renderTelegramBotPanel();
+  setNotifyMessage(msgTargetId, successText, 'success');
+  addLog(successText, 'success');
+}
+
+async function saveTriggersOnly() {
   try {
+    const cur = notifyState.config || {};
     const payload = {
       enabledEvents: collectGlobalEvents(),
-      telegramBot: collectBotFormConfig(),
-      channels: notifyState.config?.channels || [],
+      telegramBot: cur.telegramBot || {},
+      channels: cur.channels || [],
     };
-    const res = await fetchJSON('/api/notify/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    notifyState.config = res.config || payload;
-    notifyState.botStatus = res.botStatus || {};
-    renderTelegramBotPanel();
-    renderNotifyChannelsList();
-    setNotifyMessage(msgTargetId, '通知与 Telegram Bot 配置已保存并热重载生效。', 'success');
-    addLog('已保存通知与 Telegram Bot 配置。', 'success');
+    await persistNotifyPayload(payload, 'notify-triggers-message', '全局通知触发点配置已保存并生效。');
   } catch (err) {
-    setNotifyMessage(msgTargetId, `保存失败: ${err.message}`, 'error');
+    setNotifyMessage('notify-triggers-message', `保存失败: ${err.message}`, 'error');
+  }
+}
+
+async function saveTelegramBotOnly() {
+  try {
+    const cur = notifyState.config || {};
+    const payload = {
+      enabledEvents: cur.enabledEvents || [],
+      telegramBot: collectBotFormConfig(),
+      channels: cur.channels || [],
+    };
+    await persistNotifyPayload(payload, 'tg-bot-message', '交互式 Telegram Bot 配置已保存并热重载。');
+  } catch (err) {
+    setNotifyMessage('tg-bot-message', `保存失败: ${err.message}`, 'error');
   }
 }
 
@@ -246,44 +316,51 @@ async function testTelegramBot(sendMessage) {
   }
 }
 
-function renderNotifyChannelsList() {
-  const listEl = document.getElementById('notify-channels-list');
-  if (!listEl) return;
+function syncChannelSelectionAfterLoad() {
   const channels = notifyState.config?.channels || [];
-  if (!channels.length) {
-    listEl.innerHTML = '<div class="empty-state compact">暂无单向通知渠道，可在下方添加。</div>';
+  if (notifyState.creatingChannel) {
+    renderVerticalChannelTabs();
     return;
   }
-  const proxyMap = new Map(notifyState.proxies.map(p => [p.id, p.remark || p.url]));
-  listEl.innerHTML = channels.map(ch => {
-    const proxyLabel = ch.proxyId && ch.proxyId !== 'none' ? (proxyMap.get(ch.proxyId) || ch.proxyId) : '直连';
-    const evCount = (ch.events || []).length;
+  if (notifyState.selectedChannelId && channels.some(c => c.id === notifyState.selectedChannelId)) {
+    selectNotifyChannel(notifyState.selectedChannelId);
+    return;
+  }
+  if (channels.length > 0) {
+    selectNotifyChannel(channels[0].id);
+    return;
+  }
+  startNewNotifyChannel();
+}
+
+function renderVerticalChannelTabs() {
+  const railEl = document.getElementById('notify-channels-tabs');
+  if (!railEl) return;
+  const channels = notifyState.config?.channels || [];
+  if (!channels.length) {
+    railEl.innerHTML = '<div class="empty-state compact">暂无渠道，请填写右侧表单添加</div>';
+    return;
+  }
+  railEl.innerHTML = channels.map(ch => {
+    const active = !notifyState.creatingChannel && notifyState.selectedChannelId === ch.id;
     return `
-      <div class="notify-channel-row" data-id="${escapeAttr(ch.id)}">
-        <div class="notify-channel-main">
-          <div class="notify-channel-title">
-            <strong>${escapeHtml(ch.name || ch.id)}</strong>
-            <span class="notify-tag">${escapeHtml(ch.type)}</span>
-            <span class="notify-badge ${ch.enabled ? 'ok' : ''}">${ch.enabled ? '已启用' : '已停用'}</span>
-          </div>
-          <div class="notify-channel-sub">
-            代理: ${escapeHtml(proxyLabel)} | 订阅触发点: ${evCount} 个 | 冷却: ${ch.cooldownSec || 0}s
-          </div>
-        </div>
-        <div class="notify-channel-actions">
-          <button type="button" class="secondary-btn oci-ip-btn-sm" data-action="test" data-id="${escapeAttr(ch.id)}">测试</button>
-          <button type="button" class="secondary-btn oci-ip-btn-sm" data-action="edit" data-id="${escapeAttr(ch.id)}">编辑</button>
-          <button type="button" class="ghost-btn oci-ip-btn-sm" data-action="delete" data-id="${escapeAttr(ch.id)}">删除</button>
-        </div>
-      </div>
+      <button type="button" class="notify-vtab ${active ? 'active' : ''}" data-channel-id="${escapeAttr(ch.id)}">
+        <span class="notify-vtab-dot ${ch.enabled ? 'on' : ''}"></span>
+        <span class="notify-vtab-name">${escapeHtml(ch.name || ch.id)}</span>
+        <span class="notify-tag">${escapeHtml(ch.type)}</span>
+      </button>
     `;
   }).join('');
 }
 
-function resetNotifyChannelForm() {
-  notifyState.editingChannelId = '';
+function startNewNotifyChannel() {
+  notifyState.creatingChannel = true;
+  notifyState.selectedChannelId = '';
+  renderVerticalChannelTabs();
+
   document.getElementById('notify-ch-id').value = '';
   document.getElementById('notify-ch-editor-title').textContent = '添加通知渠道';
+  document.getElementById('notify-ch-delete-btn').hidden = true;
   document.getElementById('notify-ch-name').value = '';
   document.getElementById('notify-ch-type').value = 'bark';
   document.getElementById('notify-ch-enabled').checked = true;
@@ -296,12 +373,16 @@ function resetNotifyChannelForm() {
   setNotifyMessage('notify-ch-message', '', '');
 }
 
-function editNotifyChannel(id) {
+function selectNotifyChannel(id) {
   const ch = (notifyState.config?.channels || []).find(item => item.id === id);
   if (!ch) return;
-  notifyState.editingChannelId = ch.id;
+  notifyState.creatingChannel = false;
+  notifyState.selectedChannelId = ch.id;
+  renderVerticalChannelTabs();
+
   document.getElementById('notify-ch-id').value = ch.id;
-  document.getElementById('notify-ch-editor-title').textContent = `编辑通知渠道：${ch.name || ch.id}`;
+  document.getElementById('notify-ch-editor-title').textContent = ch.name || ch.id;
+  document.getElementById('notify-ch-delete-btn').hidden = false;
   document.getElementById('notify-ch-name').value = ch.name || '';
   document.getElementById('notify-ch-type').value = ch.type || 'bark';
   document.getElementById('notify-ch-enabled').checked = !!ch.enabled;
@@ -312,7 +393,6 @@ function editNotifyChannel(id) {
   renderEventCheckboxesInto('notify-ch-events', 'notify-ch-ev-cb', ch.events || []);
   renderChannelParamFields(ch.params || {});
   setNotifyMessage('notify-ch-message', '', '');
-  document.getElementById('notify-channel-form')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
 function renderChannelParamFields(existingParams) {
@@ -377,20 +457,61 @@ async function saveNotifyChannelFromForm(event) {
     setNotifyMessage('notify-ch-message', '请填写渠道名称', 'error');
     return;
   }
-  const list = Array.isArray(notifyState.config?.channels) ? [...notifyState.config.channels] : [];
+  const cur = notifyState.config || {};
+  const list = Array.isArray(cur.channels) ? [...cur.channels] : [];
+  let savedIdx = -1;
   if (ch.id) {
-    const idx = list.findIndex(item => item.id === ch.id);
-    if (idx >= 0) {
-      list[idx] = ch;
+    savedIdx = list.findIndex(item => item.id === ch.id);
+    if (savedIdx >= 0) {
+      list[savedIdx] = ch;
     } else {
       list.push(ch);
+      savedIdx = list.length - 1;
     }
   } else {
     list.push(ch);
+    savedIdx = list.length - 1;
   }
-  notifyState.config = { ...(notifyState.config || {}), channels: list };
-  await saveNotifyAllConfig('notify-ch-message');
-  resetNotifyChannelForm();
+
+  try {
+    const payload = {
+      enabledEvents: cur.enabledEvents || [],
+      telegramBot: cur.telegramBot || {},
+      channels: list,
+    };
+    await persistNotifyPayload(payload, 'notify-ch-message', `渠道「${ch.name}」已保存并生效。`);
+    const updatedList = notifyState.config?.channels || [];
+    const target = updatedList[savedIdx] || updatedList[updatedList.length - 1];
+    if (target) {
+      selectNotifyChannel(target.id);
+      setNotifyMessage('notify-ch-message', `渠道「${target.name || target.id}」已保存并生效。`, 'success');
+    } else {
+      renderVerticalChannelTabs();
+    }
+  } catch (err) {
+    setNotifyMessage('notify-ch-message', `保存失败: ${err.message}`, 'error');
+  }
+}
+
+async function deleteSelectedNotifyChannel() {
+  const id = notifyState.selectedChannelId;
+  if (!id) return;
+  const ch = (notifyState.config?.channels || []).find(item => item.id === id);
+  if (!confirm(`确定删除通知渠道「${ch?.name || id}」？`)) return;
+
+  try {
+    const cur = notifyState.config || {};
+    const nextList = (cur.channels || []).filter(item => item.id !== id);
+    await persistNotifyPayload({
+      enabledEvents: cur.enabledEvents || [],
+      telegramBot: cur.telegramBot || {},
+      channels: nextList,
+    }, 'notify-ch-message', `已删除通知渠道「${ch?.name || id}」。`);
+    notifyState.selectedChannelId = '';
+    syncChannelSelectionAfterLoad();
+  } catch (err) {
+    setNotifyMessage('notify-ch-message', `删除失败: ${err.message}`, 'error');
+  }
 }
 
 async function testNotifyChannelFromForm() {
@@ -410,42 +531,15 @@ async function testNotifyChannelFromForm() {
   }
 }
 
-async function handleNotifyChannelListClick(event) {
-  const btn = event.target.closest('button[data-action]');
-  if (!btn) return;
-  const action = btn.dataset.action;
-  const id = btn.dataset.id;
-  if (action === 'edit') {
-    editNotifyChannel(id);
-    return;
-  }
-  if (action === 'delete') {
-    if (!confirm('确定删除该通知渠道？')) return;
-    const list = (notifyState.config?.channels || []).filter(c => c.id !== id);
-    notifyState.config = { ...(notifyState.config || {}), channels: list };
-    if (notifyState.editingChannelId === id) {
-      resetNotifyChannelForm();
-    }
-    await saveNotifyAllConfig('notify-global-message');
-    return;
-  }
-  if (action === 'test') {
-    const ch = (notifyState.config?.channels || []).find(c => c.id === id);
-    if (!ch) return;
-    setNotifyMessage('notify-global-message', `正在测试渠道「${ch.name || ch.id}」...`, '');
-    try {
-      const res = await fetchJSON('/api/notify/test-channel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(ch),
-      });
-      setNotifyMessage('notify-global-message', `「${ch.name || ch.id}」${res.message || '测试成功'}`, 'success');
-      refreshNotifyLogs();
-    } catch (err) {
-      setNotifyMessage('notify-global-message', `「${ch.name || ch.id}」测试失败: ${err.message}`, 'error');
-      refreshNotifyLogs();
-    }
-  }
+function openNotifyLogsModal() {
+  const modal = document.getElementById('notify-logs-modal');
+  if (modal) modal.hidden = false;
+  refreshNotifyLogs();
+}
+
+function closeNotifyLogsModal() {
+  const modal = document.getElementById('notify-logs-modal');
+  if (modal) modal.hidden = true;
 }
 
 async function refreshNotifyLogs() {

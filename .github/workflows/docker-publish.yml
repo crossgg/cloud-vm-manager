@@ -27,15 +27,11 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to Container Registry
-        uses: docker/login-action@v3
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          go-version: '1.24'
+          cache: true
 
       - name: Set version tag
         id: version_tag
@@ -46,6 +42,35 @@ jobs:
             TAG_VAL="$(date +%Y-%m-%d)"
           fi
           echo "IMAGE_TAG=${TAG_VAL}" >> $GITHUB_ENV
+          echo "build_ts=$(date +%s)" >> $GITHUB_OUTPUT
+
+      - name: Cross-compile binaries and prepare Docker context
+        shell: bash
+        run: |
+          set -euo pipefail
+          for target in "amd64::amd64" "arm64::arm64" "arm:7:armv7"; do
+            IFS=':' read -r arch arm dir <<< "$target"
+            out="docker-context/prebuilt/linux/${dir}"
+            mkdir -p "${out}"
+            CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" GOARM="${arm}" \
+              go build -trimpath -ldflags "-s -w -X github.com/crossgg/cloud-vm-manager/internal/updater.Version=${{ env.IMAGE_TAG }}" \
+              -o "${out}/cloud-vm-manager" .
+            CGO_ENABLED=0 GOOS=linux GOARCH="${arch}" GOARM="${arm}" \
+              go build -trimpath -ldflags "-s -w" \
+              -o "${out}/launcher" ./cmd/launcher
+          done
+          cp -r public docker-context/public
+          cp Dockerfile.release docker-context/Dockerfile
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Extract metadata
         id: meta
@@ -59,10 +84,12 @@ jobs:
       - name: Build and push (multi-platform)
         uses: docker/build-push-action@v5
         with:
-          context: .
-          platforms: linux/amd64,linux/arm64
+          context: docker-context
+          file: docker-context/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           build-args: |
             VERSION=${{ env.IMAGE_TAG }}
+            BUILD_TS=${{ steps.version_tag.outputs.build_ts }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}

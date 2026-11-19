@@ -1,0 +1,24 @@
+FROM alpine:latest
+ARG TARGETOS
+ARG TARGETARCH
+ARG TARGETVARIANT
+ARG VERSION=dev
+ARG BUILD_TS=0
+
+RUN apk --no-cache add ca-certificates
+
+WORKDIR /app/
+
+COPY prebuilt/${TARGETOS}/${TARGETARCH}${TARGETVARIANT}/cloud-vm-manager .
+COPY prebuilt/${TARGETOS}/${TARGETARCH}${TARGETVARIANT}/launcher .
+COPY public ./public
+
+RUN echo "${VERSION}-${BUILD_TS}" > /app/.image_id \
+    && mkdir -p /app/config/keys /app/runtime \
+    && chmod +x /app/launcher /app/cloud-vm-manager
+
+ENV GIN_MODE=release
+
+EXPOSE 3000
+
+ENTRYPOINT ["/app/launcher"]

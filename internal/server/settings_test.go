@@ -272,7 +272,66 @@ func TestAccountDetailMasksSecretAndValidatesKeyPath(t *testing.T) {
 		t.Fatalf("expected 200 for key_file inside config/keys, got %d: %s", wKeyIn.Code, wKeyIn.Body.String())
 	}
 
-	// 6. Reject backslash traversal on /public/
+	// 6. Verify OCI / GCP detail endpoints mask middle of sensitive fields and preserve on edit
+	ociBody := `{"provider":"oci","account":"oci1","fields":{"user":"ocid1.user.oc1..aaaa11112222zzzz","fingerprint":"aa:bb:cc:dd:ee:ff:00:11","tenancy":"ocid1.tenancy.oc1..bbbb33334444yyyy","compartment_id":"ocid1.compartment.oc1..cccc5555xxxx","region":"ap-tokyo-1","key_file":"config/keys/oci1.pem"}}`
+	reqOci := httptest.NewRequest(http.MethodPost, "http://app.example.com/api/accounts", bytes.NewBufferString(ociBody))
+	reqOci.Header.Set("Content-Type", "application/json")
+	wOci := httptest.NewRecorder()
+	router.ServeHTTP(wOci, reqOci)
+	if wOci.Code != http.StatusOK {
+		t.Fatalf("expected 200 saving oci1, got %d: %s", wOci.Code, wOci.Body.String())
+	}
+
+	reqOciGet := httptest.NewRequest(http.MethodGet, "http://app.example.com/api/accounts/oci/oci1", nil)
+	wOciGet := httptest.NewRecorder()
+	router.ServeHTTP(wOciGet, reqOciGet)
+	if wOciGet.Code != http.StatusOK {
+		t.Fatalf("expected 200 getting oci1, got %d", wOciGet.Code)
+	}
+	var ociDetail struct {
+		Fields map[string]string `json:"fields"`
+	}
+	if err := json.Unmarshal(wOciGet.Body.Bytes(), &ociDetail); err != nil {
+		t.Fatal(err)
+	}
+	if ociDetail.Fields["region"] != "ap-tokyo-1" {
+		t.Fatalf("expected plaintext region, got %q", ociDetail.Fields["region"])
+	}
+	for _, k := range []string{"user", "fingerprint", "tenancy", "compartment_id", "key_file"} {
+		if !strings.Contains(ociDetail.Fields[k], "****") {
+			t.Fatalf("expected masked field %s, got %q", k, ociDetail.Fields[k])
+		}
+	}
+
+	// Edit only region while submitting masked values back -> originals must be preserved
+	ociEditPayload, _ := json.Marshal(map[string]interface{}{
+		"provider":        "oci",
+		"account":         "oci1",
+		"originalAccount": "oci1",
+		"fields": map[string]string{
+			"user":           ociDetail.Fields["user"],
+			"fingerprint":    ociDetail.Fields["fingerprint"],
+			"tenancy":        ociDetail.Fields["tenancy"],
+			"compartment_id": ociDetail.Fields["compartment_id"],
+			"region":         "ap-osaka-1",
+			"key_file":       ociDetail.Fields["key_file"],
+		},
+	})
+	reqOciEdit := httptest.NewRequest(http.MethodPost, "http://app.example.com/api/accounts", bytes.NewReader(ociEditPayload))
+	reqOciEdit.Header.Set("Content-Type", "application/json")
+	wOciEdit := httptest.NewRecorder()
+	router.ServeHTTP(wOciEdit, reqOciEdit)
+	if wOciEdit.Code != http.StatusOK {
+		t.Fatalf("expected 200 editing oci1 with masked values, got %d: %s", wOciEdit.Code, wOciEdit.Body.String())
+	}
+	updatedConf, _ := os.ReadFile(filepath.Join(dir, "config", "config.conf"))
+	if !strings.Contains(string(updatedConf), "user=ocid1.user.oc1..aaaa11112222zzzz") ||
+		!strings.Contains(string(updatedConf), "key_file=config/keys/oci1.pem") ||
+		!strings.Contains(string(updatedConf), "region=ap-osaka-1") {
+		t.Fatalf("expected original OCI credentials preserved and region updated, got:\n%s", string(updatedConf))
+	}
+
+	// 7. Reject backslash traversal on /public/
 	reqTrav := httptest.NewRequest(http.MethodGet, `http://app.example.com/public/..\config\config.conf`, nil)
 	wTrav := httptest.NewRecorder()
 	router.ServeHTTP(wTrav, reqTrav)

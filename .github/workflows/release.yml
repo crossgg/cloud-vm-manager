@@ -28,21 +28,25 @@ jobs:
             goarm: ''
             archive: tar.gz
             suffix: linux_amd64
+            docker_dir: linux/amd64
           - goos: linux
             goarch: arm64
             goarm: ''
             archive: tar.gz
             suffix: linux_arm64
+            docker_dir: linux/arm64
           - goos: linux
             goarch: arm
             goarm: '7'
             archive: tar.gz
             suffix: linux_armv7
+            docker_dir: linux/armv7
           - goos: windows
             goarch: amd64
             goarm: ''
             archive: zip
             suffix: windows_amd64
+            docker_dir: ''
 
     steps:
       - name: Checkout
@@ -76,11 +80,17 @@ jobs:
           GOARM: ${{ matrix.goarm }}
           CGO_ENABLED: '0'
           VERSION: ${{ steps.version.outputs.version }}
+          DOCKER_DIR: ${{ matrix.docker_dir }}
         run: |
           mkdir -p dist/package
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
           go build -trimpath -ldflags "-s -w -X github.com/crossgg/cloud-vm-manager/internal/updater.Version=${VERSION}" -o "dist/package/${APP_NAME}${EXT}" .
+          if [ -n "$DOCKER_DIR" ]; then
+            mkdir -p "dist/docker/${DOCKER_DIR}"
+            cp "dist/package/${APP_NAME}${EXT}" "dist/docker/${DOCKER_DIR}/${APP_NAME}"
+            go build -trimpath -ldflags "-s -w" -o "dist/docker/${DOCKER_DIR}/launcher" ./cmd/launcher
+          fi
           cp -r public dist/package/public
           cat > dist/package/README-update.txt <<'TXT'
           This archive contains a cloud-vm-manager binary built by GitHub Actions.
@@ -102,6 +112,14 @@ jobs:
         with:
           name: ${{ env.APP_NAME }}_${{ matrix.suffix }}
           path: dist/${{ env.APP_NAME }}_${{ matrix.suffix }}.*
+          if-no-files-found: error
+
+      - name: Upload Docker binary artifact
+        if: matrix.docker_dir != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: docker-bin-${{ matrix.suffix }}
+          path: dist/docker
           if-no-files-found: error
 
   publish-release:
@@ -129,6 +147,7 @@ jobs:
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
+          pattern: ${{ env.APP_NAME }}_*
           path: dist
           merge-multiple: true
 
@@ -182,6 +201,7 @@ jobs:
             dist/checksums.txt
 
   build-and-push-image:
+    needs: build-binaries
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -200,6 +220,21 @@ jobs:
             VERSION="${GITHUB_REF_NAME}"
           fi
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "build_ts=$(date +%s)" >> "$GITHUB_OUTPUT"
+
+      - name: Download prebuilt Linux binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: docker-bin-*
+          path: docker-context/prebuilt
+          merge-multiple: true
+
+      - name: Prepare Docker build context
+        shell: bash
+        run: |
+          cp -r public docker-context/public
+          cp Dockerfile.release docker-context/Dockerfile
+          ls -la docker-context/prebuilt/linux/*
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -223,10 +258,12 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v5
         with:
-          context: .
-          platforms: linux/amd64,linux/arm64
+          context: docker-context
+          file: docker-context/Dockerfile
+          platforms: linux/amd64,linux/arm64,linux/arm/v7
           build-args: |
             VERSION=${{ steps.version.outputs.version }}
+            BUILD_TS=${{ steps.version.outputs.build_ts }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
