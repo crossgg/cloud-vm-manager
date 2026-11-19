@@ -40,8 +40,6 @@ func InitRuntime(cfg *config.Config, path string, authSvc *auth.AuthService) err
 		return err
 	}
 	runtimeState.mu.Lock()
-	defer runtimeState.mu.Unlock()
-
 	runtimeState.cfg = cfg
 	runtimeState.configPath = path
 	runtimeState.configModTime = configModTime(path)
@@ -52,6 +50,9 @@ func InitRuntime(cfg *config.Config, path string, authSvc *auth.AuthService) err
 	runtimeState.cloudflare = next.cloudflare
 	runtimeState.auth = authSvc
 	runtimeState.lastReloadError = ""
+	runtimeState.mu.Unlock()
+
+	syncNotifyRuntime(cfg, authSvc)
 	return nil
 }
 
@@ -91,6 +92,7 @@ func ReloadRuntimeConfig() error {
 
 	stopAllAzureMonitors()
 	InitAzureMonitors()
+	syncNotifyRuntime(cfg, authSvc)
 	return nil
 }
 

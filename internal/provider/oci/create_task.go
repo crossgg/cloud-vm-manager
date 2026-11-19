@@ -496,6 +496,7 @@ type OCICreateTaskManager struct {
 	tasks           map[string]*OCICreateTask
 	order           []string
 	runners         map[string]chan struct{}
+	onSucceeded     func(task OCICreateTask)
 }
 
 func NewOCICreateTaskManager(storePath string, resolver func(account string) (*OCIService, error)) *OCICreateTaskManager {
@@ -505,6 +506,12 @@ func NewOCICreateTaskManager(storePath string, resolver func(account string) (*O
 		tasks:           make(map[string]*OCICreateTask),
 		runners:         make(map[string]chan struct{}),
 	}
+}
+
+func (m *OCICreateTaskManager) SetOnSucceeded(fn func(task OCICreateTask)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onSucceeded = fn
 }
 
 func (m *OCICreateTaskManager) LoadAndAutoResume() error {
@@ -803,13 +810,14 @@ func (m *OCICreateTaskManager) runLoop(taskID string, stopCh chan struct{}) {
 
 func (m *OCICreateTaskManager) recordAttemptResult(taskID string, stopCh chan struct{}, instanceID string, attemptErr error) bool {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if activeCh, ok := m.runners[taskID]; !ok || activeCh != stopCh {
+		m.mu.Unlock()
 		return false
 	}
 	task, ok := m.tasks[taskID]
 	if !ok || task.Status != OCICreateTaskStatusRunning {
+		m.mu.Unlock()
 		return false
 	}
 
@@ -826,6 +834,12 @@ func (m *OCICreateTaskManager) recordAttemptResult(taskID string, stopCh chan st
 		m.appendTaskLogLocked(task, fmt.Sprintf("第 %d 次尝试成功！实例 ID: %s", task.Attempts, instanceID))
 		delete(m.runners, taskID)
 		_ = m.saveLocked()
+		succeededCopy := cloneCreateTask(task)
+		cb := m.onSucceeded
+		m.mu.Unlock()
+		if cb != nil {
+			go cb(succeededCopy)
+		}
 		return false
 	}
 
@@ -837,6 +851,7 @@ func (m *OCICreateTaskManager) recordAttemptResult(taskID string, stopCh chan st
 	task.LastMessage = fmt.Sprintf("第 %d 次尝试未成功，等待重试", task.Attempts)
 	m.appendTaskLogLocked(task, fmt.Sprintf("第 %d 次尝试失败: %s", task.Attempts, summarizeCreateError(errText)))
 	_ = m.saveLocked()
+	m.mu.Unlock()
 	return true
 }
 

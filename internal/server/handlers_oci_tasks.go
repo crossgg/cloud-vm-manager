@@ -38,6 +38,7 @@ func InitOCICreateTasks() {
 		}
 		return ociSvc, nil
 	})
+	manager.SetOnSucceeded(emitOCITaskSucceededEvent)
 
 	if err := manager.LoadAndAutoResume(); err != nil {
 		fmt.Printf("warning: failed to load OCI create tasks from %s: %v\n", storePath, err)

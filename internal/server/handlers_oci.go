@@ -500,6 +500,9 @@ func getOrCreateDTMonitor(account string) *oci.OCIDataTransferMonitor {
 }
 
 func setDTMonitor(account string, monitor *oci.OCIDataTransferMonitor) {
+	if monitor != nil {
+		monitor.SetOnAlert(onOCIDTAlertCallback())
+	}
 	dtMonitors.mu.Lock()
 	defer dtMonitors.mu.Unlock()
 	dtMonitors.monitors[account] = monitor

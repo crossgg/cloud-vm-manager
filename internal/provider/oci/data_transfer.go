@@ -32,6 +32,13 @@ type OCIDataTransferMonitor struct {
 	running    bool
 	lastResult *DataTransferResult
 	logs       []string
+	onAlert    func(account config.OCIConfig, result DataTransferResult, autoStopped bool, actionLogs []string)
+}
+
+func (m *OCIDataTransferMonitor) SetOnAlert(fn func(account config.OCIConfig, result DataTransferResult, autoStopped bool, actionLogs []string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onAlert = fn
 }
 
 // NewOCIDataTransferMonitor creates a new monitor instance.
@@ -106,9 +113,21 @@ func (m *OCIDataTransferMonitor) Start() {
 					m.addLog(fmt.Sprintf("周期检测失败：%s", result.Error))
 				}
 
-				if autoStop && result.Error == "" && result.UsageGB > threshold {
-					m.addLog(fmt.Sprintf("⚠️ 用量 %.2f GB 超过阈值 %.0f GB，正在自动停止实例...", result.UsageGB, threshold))
-					m.autoStopInstances(stopMethod)
+				if result.Error == "" && result.UsageGB > threshold {
+					var actionLogs []string
+					if autoStop {
+						m.addLog(fmt.Sprintf("⚠️ 用量 %.2f GB 超过阈值 %.0f GB，正在自动停止实例...", result.UsageGB, threshold))
+						actionLogs = m.autoStopInstances(stopMethod)
+					} else {
+						m.addLog(fmt.Sprintf("⚠️ 用量 %.2f GB 超过阈值 %.0f GB", result.UsageGB, threshold))
+					}
+					m.mu.RLock()
+					cb := m.onAlert
+					acc := m.account
+					m.mu.RUnlock()
+					if cb != nil && result != nil {
+						go cb(acc, *result, autoStop, actionLogs)
+					}
 				}
 			}
 		}
@@ -194,16 +213,18 @@ func (m *OCIDataTransferMonitor) addLog(msg string) {
 	}
 }
 
-func (m *OCIDataTransferMonitor) autoStopInstances(stopMethod string) {
+func (m *OCIDataTransferMonitor) autoStopInstances(stopMethod string) []string {
 	instances, err := m.service.ListVMs()
 	if err != nil {
-		m.addLog(fmt.Sprintf("获取实例列表失败：%s", err.Error()))
-		return
+		msg := fmt.Sprintf("获取实例列表失败：%s", err.Error())
+		m.addLog(msg)
+		return []string{msg}
 	}
 	action := "SOFTSTOP"
 	if stopMethod == "hard" {
 		action = "STOP"
 	}
+	var actionLogs []string
 	for _, instance := range instances {
 		status, _ := instance["status"].(string)
 		if status != "VM running" {
@@ -216,11 +237,16 @@ func (m *OCIDataTransferMonitor) autoStopInstances(stopMethod string) {
 		}
 		m.addLog(fmt.Sprintf("正在停止实例 %s (%s)，方式：%s", name, id, action))
 		if err := m.service.instanceAction(id, action); err != nil {
-			m.addLog(fmt.Sprintf("停止实例 %s 失败：%s", name, err.Error()))
+			msg := fmt.Sprintf("停止实例 %s 失败：%s", name, err.Error())
+			m.addLog(msg)
+			actionLogs = append(actionLogs, msg)
 		} else {
-			m.addLog(fmt.Sprintf("实例 %s 已发送停止命令", name))
+			msg := fmt.Sprintf("实例 %s 已发送停止命令 (%s)", name, action)
+			m.addLog(msg)
+			actionLogs = append(actionLogs, msg)
 		}
 	}
+	return actionLogs
 }
 
 // QueryDataTransfer queries the current month's data transfer usage from OCI Monitoring API.

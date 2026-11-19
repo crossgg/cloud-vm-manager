@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/crossgg/cloud-vm-manager/internal/config"
@@ -49,15 +50,24 @@ func (r *ProxyRouter) HTTPClient(provider, account string, timeout time.Duration
 	if !ok {
 		return &http.Client{Timeout: timeout}, nil
 	}
-	primary, ok := r.proxies[binding.ProxyID]
+	return r.HTTPClientByID(binding.ProxyID, binding.FallbackProxyID, timeout)
+}
+
+// HTTPClientByID builds an HTTP client routed through the specified proxy ID and optional fallback policy.
+func (r *ProxyRouter) HTTPClientByID(proxyID, fallbackProxyID string, timeout time.Duration) (*http.Client, error) {
+	proxyID = strings.TrimSpace(proxyID)
+	if r == nil || proxyID == "" || strings.EqualFold(proxyID, config.ProxyFallbackNone) || strings.EqualFold(proxyID, config.ProxyFallbackDirect) {
+		return &http.Client{Timeout: timeout, Transport: DirectTransport()}, nil
+	}
+	primary, ok := r.proxies[proxyID]
 	if !ok {
-		return nil, fmt.Errorf("primary proxy %q not found", binding.ProxyID)
+		return nil, fmt.Errorf("primary proxy %q not found", proxyID)
 	}
 	primaryTransport, err := TransportForProxy(primary.URL)
 	if err != nil {
 		return nil, err
 	}
-	fallbackID := config.NormalizeProxyFallback(binding.FallbackProxyID)
+	fallbackID := config.NormalizeProxyFallback(fallbackProxyID)
 	if fallbackID == config.ProxyFallbackNone {
 		return &http.Client{Timeout: timeout, Transport: primaryTransport}, nil
 	}

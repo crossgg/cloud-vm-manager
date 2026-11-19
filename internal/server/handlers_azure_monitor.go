@@ -26,6 +26,9 @@ func getAzureMonitor(account string) *azure.AzureCreditMonitor {
 }
 
 func setAzureMonitor(account string, m *azure.AzureCreditMonitor) {
+	if m != nil {
+		m.SetOnAlert(onAzureCreditAlertCallback())
+	}
 	azureMonitors.mu.Lock()
 	defer azureMonitors.mu.Unlock()
 	azureMonitors.monitors[account] = m

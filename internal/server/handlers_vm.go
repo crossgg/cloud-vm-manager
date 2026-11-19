@@ -71,6 +71,8 @@ func getVM(c *gin.Context) {
 }
 
 func startVM(c *gin.Context) {
+	providerName := c.Param("provider")
+	account := c.Param("account")
 	name := c.Param("name")
 	service, _, ok := getCloudService(c)
 	if !ok {
@@ -80,10 +82,13 @@ func startVM(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	emitVMPowerEvent(providerName, account, name, "start", "Web 面板")
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("starting VM: %s", name)})
 }
 
 func stopVM(c *gin.Context) {
+	providerName := c.Param("provider")
+	account := c.Param("account")
 	name := c.Param("name")
 	service, _, ok := getCloudService(c)
 	if !ok {
@@ -93,10 +98,13 @@ func stopVM(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	emitVMPowerEvent(providerName, account, name, "stop", "Web 面板")
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("stopping VM: %s", name)})
 }
 
 func restartVM(c *gin.Context) {
+	providerName := c.Param("provider")
+	account := c.Param("account")
 	name := c.Param("name")
 	service, _, ok := getCloudService(c)
 	if !ok {
@@ -106,6 +114,7 @@ func restartVM(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	emitVMPowerEvent(providerName, account, name, "restart", "Web 面板")
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": fmt.Sprintf("restarting VM: %s", name)})
 }
 
@@ -127,6 +136,7 @@ func changeIP(c *gin.Context) {
 	if updateDNSAfterChange && result.NewIPAddress != "" && cloudflare.HasBinding(providerName, account, name) {
 		result.Logs = append(result.Logs, cloudflare.UpdateForVM(providerName, account, name, result.NewIPAddress)...)
 	}
+	emitVMChangeIPEvent(providerName, account, name, result.NewIPAddress, result.Message, "Web 面板")
 	c.JSON(http.StatusOK, result)
 }
 

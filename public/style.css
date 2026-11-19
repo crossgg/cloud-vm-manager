@@ -4145,3 +4145,154 @@ body.light-theme .oci-bv-warning {
   color: #92400e;
   background: rgba(245, 158, 11, 0.14);
 }
+
+/* ==================== Notification Center & Telegram Bot ==================== */
+.notify-trigger-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 10px;
+}
+
+.notify-trigger-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+  gap: 8px;
+}
+
+.notify-trigger-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  cursor: pointer;
+}
+
+.notify-trigger-card span {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.notify-trigger-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+
+.notify-form-grid {
+  display: flex;
+  gap: 20px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+
+.notify-meta-line {
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 12px;
+}
+
+.notify-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  color: var(--muted);
+}
+
+.notify-badge.ok {
+  color: var(--green);
+  background: var(--green-bg);
+  border-color: var(--green-border);
+}
+
+.notify-badge.warn {
+  color: var(--amber);
+  background: var(--amber-bg);
+  border-color: var(--amber-border);
+}
+
+.notify-badge.err {
+  color: var(--red);
+  background: var(--red-bg);
+  border-color: var(--red-border);
+}
+
+.notify-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  background: var(--panel-soft);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.notify-channels-list,
+.notify-logs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.notify-channel-row,
+.notify-log-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel-soft);
+  flex-wrap: wrap;
+}
+
+.notify-log-row {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+}
+
+.notify-channel-title,
+.notify-log-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.notify-channel-sub,
+.notify-log-body {
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.notify-channel-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.notify-channel-editor {
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+}
+
+.notify-log-time {
+  margin-left: auto;
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.notify-err-text {
+  color: var(--red);
+}

@@ -49,6 +49,13 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 	r.POST("/api/settings/auth", updateAuthSettings)
 	r.POST("/api/settings/update", updateUpdateSettings)
 
+	// Notifications & Interactive Telegram Bot
+	r.GET("/api/notify/config", getNotifyConfig)
+	r.PUT("/api/notify/config", saveNotifyConfigHandler)
+	r.POST("/api/notify/test-channel", testNotifyChannel)
+	r.POST("/api/notify/test-bot", testTelegramBotHandler)
+	r.GET("/api/notify/logs", getNotifyLogs)
+
 	// Accounts & Proxies
 	r.GET("/api/accounts", listAccounts)
 	r.GET("/api/accounts/:provider/:account", getAccountDetail)

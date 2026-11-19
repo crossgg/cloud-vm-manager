@@ -1,6 +1,7 @@
 config/config.conf
 config/dns.conf
 config/proxy.conf
+config/notify.conf
 config/keys
 .env
 app/key/

@@ -75,6 +75,7 @@ func changeOCIIPv4(c *gin.Context) {
 	if payload.UpdateDNS && result.NewIPAddress != "" && cf.HasBinding(providerName, account, instanceID) {
 		result.Logs = append(result.Logs, cf.UpdateForVMByIPs(providerName, account, instanceID, result.NewIPAddress, "")...)
 	}
+	emitVMChangeIPEvent(providerName, account, instanceID, result.NewIPAddress, result.Message, "Web 面板")
 	c.JSON(http.StatusOK, result)
 }
 

@@ -16,6 +16,7 @@ type Config struct {
 	SourcePath    string             `yaml:"-"`
 	DNSPath       string             `yaml:"-"`
 	ProxyPath     string             `yaml:"-"`
+	NotifyPath    string             `yaml:"-"`
 	AzureAccounts []AzureConfig      `yaml:"-"`
 	GCPAccounts   []GCPConfig        `yaml:"-"`
 	OCIAccounts   []OCIConfig        `yaml:"-"`
@@ -23,6 +24,7 @@ type Config struct {
 	DNSBindings   []DNSBinding       `yaml:"-"`
 	Proxies       []ProxyConfig      `yaml:"-"`
 	ProxyBindings []ProxyBinding     `yaml:"-"`
+	Notify        NotifyConfig       `yaml:"-"`
 	Auth          AuthConfig         `yaml:"auth"`
 	Update        UpdateConfig       `yaml:"update"`
 }
@@ -224,6 +226,12 @@ func LoadConfigWithPath() (*Config, string, error) {
 	cfg.ProxyPath = proxyPath
 	if proxyErr := LoadProxyConfig(proxyPath, cfg); proxyErr != nil {
 		return nil, "", fmt.Errorf("parse proxy config: %w", proxyErr)
+	}
+
+	notifyPath := NotifyConfigPath(configPath)
+	cfg.NotifyPath = notifyPath
+	if notifyErr := LoadNotifyConfig(notifyPath, cfg); notifyErr != nil {
+		return nil, "", fmt.Errorf("parse notify config: %w", notifyErr)
 	}
 
 	return cfg, configPath, nil

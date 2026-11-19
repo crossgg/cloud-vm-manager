@@ -31,6 +31,13 @@ type AzureCreditMonitor struct {
 	triggerReasons []string
 	actionExecuted bool
 	logs           []string
+	onAlert        func(account config.AzureConfig, ov *AzureCostOverview, reasons []string, action string, actionLogs []string)
+}
+
+func (m *AzureCreditMonitor) SetOnAlert(fn func(account config.AzureConfig, ov *AzureCostOverview, reasons []string, action string, actionLogs []string)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onAlert = fn
 }
 
 func NewAzureCreditMonitor(service *AzureService, account config.AzureConfig, cfg config.AzureCreditMonitorConfig) *AzureCreditMonitor {
@@ -167,7 +174,17 @@ func (m *AzureCreditMonitor) runCycle() {
 	reasonSummary := strings.Join(reasons, "；")
 	m.addLog("⚠️ 触发监控阈值：" + reasonSummary)
 
+	m.mu.RLock()
+	alertCB := m.onAlert
+	m.mu.RUnlock()
+	emitAlert := func(action string, actionLogs []string) {
+		if alertCB != nil {
+			go alertCB(m.account, ov, reasons, action, actionLogs)
+		}
+	}
+
 	if cfg.TriggerAction == "alert" {
+		emitAlert("alert", nil)
 		return
 	}
 	if alreadyActed {
@@ -180,20 +197,30 @@ func (m *AzureCreditMonitor) runCycle() {
 		m.addLog("正在自动停止（Deallocate）所有 Azure 虚拟机...")
 		stopped, errs, err := m.service.DeallocateAllVMs()
 		if err != nil {
-			m.addLog(fmt.Sprintf("❌ 自动停机失败：%v", err))
+			errMsg := fmt.Sprintf("❌ 自动停机失败：%v", err)
+			m.addLog(errMsg)
+			emitAlert("deallocate", []string{errMsg})
 			return
 		}
+		var actionLogs []string
 		if len(stopped) > 0 {
-			m.addLog(fmt.Sprintf("✅ 已发起停机释放 VM：%s", strings.Join(stopped, ", ")))
+			msg := fmt.Sprintf("✅ 已发起停机释放 VM：%s", strings.Join(stopped, ", "))
+			m.addLog(msg)
+			actionLogs = append(actionLogs, msg)
 		} else {
-			m.addLog("未检测到可停机的 VM")
+			msg := "未检测到可停机的 VM"
+			m.addLog(msg)
+			actionLogs = append(actionLogs, msg)
 		}
 		for _, e := range errs {
-			m.addLog("❌ 停机异常：" + e)
+			msg := "❌ 停机异常：" + e
+			m.addLog(msg)
+			actionLogs = append(actionLogs, msg)
 		}
 		if len(errs) == 0 {
 			m.markActionExecuted()
 		}
+		emitAlert("deallocate", actionLogs)
 
 	case "cleanup_orphans":
 		m.addLog("正在自动清理孤立计费资源（未绑定公网 IP、未挂载磁盘、孤立网卡、快照）...")
@@ -205,7 +232,9 @@ func (m *AzureCreditMonitor) runCycle() {
 			IncludeSnapshots:   true,
 		})
 		if err != nil {
-			m.addLog(fmt.Sprintf("❌ 清理孤立资源失败：%v", err))
+			errMsg := fmt.Sprintf("❌ 清理孤立资源失败：%v", err)
+			m.addLog(errMsg)
+			emitAlert("cleanup_orphans", []string{errMsg})
 			return
 		}
 		for _, line := range res.Logs {
@@ -214,10 +243,13 @@ func (m *AzureCreditMonitor) runCycle() {
 		if res.Success {
 			m.markActionExecuted()
 		}
+		emitAlert("cleanup_orphans", res.Logs)
 
 	case "delete_all":
 		if !cfg.ConfirmAutoDeleteAll {
-			m.addLog("⚠️ 触发动作设为“自动删除全部计费资源”，但未勾选二次安全确认开关，已拦截删除仅作告警")
+			msg := "⚠️ 触发动作设为“自动删除全部计费资源”，但未勾选二次安全确认开关，已拦截删除仅作告警"
+			m.addLog(msg)
+			emitAlert("alert", []string{msg})
 			return
 		}
 		m.addLog("🚨 已确认高危自动清理：正在按依赖顺序删除全部计费资源...")
@@ -226,7 +258,9 @@ func (m *AzureCreditMonitor) runCycle() {
 			IncludeNetwork: false,
 		})
 		if err != nil {
-			m.addLog(fmt.Sprintf("❌ 自动清空计费资源失败：%v", err))
+			errMsg := fmt.Sprintf("❌ 自动清空计费资源失败：%v", err)
+			m.addLog(errMsg)
+			emitAlert("delete_all", []string{errMsg})
 			return
 		}
 		for _, line := range res.Logs {
@@ -235,6 +269,7 @@ func (m *AzureCreditMonitor) runCycle() {
 		if res.Success {
 			m.markActionExecuted()
 		}
+		emitAlert("delete_all", res.Logs)
 	}
 }
 

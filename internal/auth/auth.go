@@ -37,11 +37,31 @@ var DefaultTrustedProxyCIDRs = []string{
 var loginLockDuration = 15 * time.Minute
 var loginFailureWindow = 10 * time.Minute
 
+type LoginEvent struct {
+	Success   bool
+	Locked    bool
+	Username  string
+	ClientIP  string
+	UserAgent string
+	Failures  int
+	Time      time.Time
+}
+
 type AuthService struct {
 	mu           sync.RWMutex
 	cfg          config.AuthConfig
 	attempts     map[string]*loginAttempt
 	trustedCIDRs []netip.Prefix
+	onLoginEvent func(LoginEvent)
+}
+
+func (a *AuthService) SetOnLoginEvent(fn func(LoginEvent)) {
+	if a == nil {
+		return
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.onLoginEvent = fn
 }
 
 type loginAttempt struct {
@@ -291,7 +311,18 @@ func (a *AuthService) Login(c *gin.Context) {
 	}
 	if subtle.ConstantTimeCompare([]byte(req.Username), []byte(cfg.Username)) != 1 ||
 		bcrypt.CompareHashAndPassword([]byte(cfg.PasswordHash), []byte(req.Password)) != nil {
-		a.recordLoginFailure(c)
+		lockedNow, failures := a.recordLoginFailure(c)
+		if lockedNow {
+			a.emitLoginEvent(LoginEvent{
+				Success:   false,
+				Locked:    true,
+				Username:  req.Username,
+				ClientIP:  c.ClientIP(),
+				UserAgent: c.Request.UserAgent(),
+				Failures:  failures,
+				Time:      time.Now(),
+			})
+		}
 		c.JSON(http.StatusUnauthorized, gin.H{"error": "invalid username or password"})
 		return
 	}
@@ -301,6 +332,13 @@ func (a *AuthService) Login(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	a.emitLoginEvent(LoginEvent{
+		Success:   true,
+		Username:  req.Username,
+		ClientIP:  c.ClientIP(),
+		UserAgent: c.Request.UserAgent(),
+		Time:      time.Now(),
+	})
 	c.JSON(http.StatusOK, gin.H{"success": true})
 }
 
@@ -408,7 +446,16 @@ func (a *AuthService) loginLocked(c *gin.Context) (time.Duration, bool) {
 	return time.Until(attempt.LockedUntil), true
 }
 
-func (a *AuthService) recordLoginFailure(c *gin.Context) {
+func (a *AuthService) emitLoginEvent(ev LoginEvent) {
+	a.mu.RLock()
+	cb := a.onLoginEvent
+	a.mu.RUnlock()
+	if cb != nil {
+		go cb(ev)
+	}
+}
+
+func (a *AuthService) recordLoginFailure(c *gin.Context) (bool, int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	key := a.loginAttemptKey(c)
@@ -424,15 +471,19 @@ func (a *AuthService) recordLoginFailure(c *gin.Context) {
 	attempt, ok := a.attempts[key]
 	if !ok || now.Sub(attempt.FirstFailAt) > loginFailureWindow {
 		if !ok && len(a.attempts) >= 10000 {
-			return
+			return false, 0
 		}
 		attempt = &loginAttempt{FirstFailAt: now}
 		a.attempts[key] = attempt
 	}
+	wasLocked := !attempt.LockedUntil.IsZero() && now.Before(attempt.LockedUntil)
 	attempt.Failures++
+	lockedNow := false
 	if attempt.Failures >= maxLoginFailures {
 		attempt.LockedUntil = now.Add(loginLockDuration)
+		lockedNow = !wasLocked
 	}
+	return lockedNow, attempt.Failures
 }
 
 func (a *AuthService) clearLoginFailures(c *gin.Context) {
