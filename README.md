@@ -95,7 +95,7 @@ docker run -d \
 
 ---
 
-## 反向代理与公网部署（宝塔 / Nginx + HTTPS）
+## ~~反向代理与公网部署~~（强烈不推荐公网部署，有漏洞可能导致信息泄露）
 
 > 完整公网安全加固参数（`BLOCK_PRIVATE_PROXY`、`TRUSTED_PROXIES`、`DISABLE_SELF_UPDATE`、仅监听 `127.0.0.1:3000` 等）请参见：**[公网部署安全指南](docs/public-deployment.md)**。
 
