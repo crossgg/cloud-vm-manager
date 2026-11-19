@@ -65,7 +65,9 @@
 | POST | `/api/vm/:provider/:account/:name/change-ip` | 更换实例公网 IP（支持按选项同步更新 DNS） |
 | POST | `/api/vm/:provider/:account/:name/update-dns` | 使用当前公网 IP 手动更新已绑定 DNS |
 
-## 5. OCI 实例编辑、安全规则与 IP 管理
+## 5. 集中式 IP 管理与 OCI 实例编辑、安全规则
+
+> `/api/vm/:provider/:account/:name/ips*` 接口已支持跨云厂商（`oci` / `azure` / `gcp`）集中式 IPv4 / IPv6 管理。
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
@@ -109,6 +111,8 @@
 | POST | `/api/oci/:account/data-transfer/start` | 启动 OCI 数据传输周期监控 |
 | POST | `/api/oci/:account/data-transfer/stop` | 停止 OCI 数据传输周期监控 |
 | GET | `/api/oci/:account/data-transfer/status` | 查询 OCI 数据传输监控运行状态 |
+| GET | `/api/oci/:account/resources` | 扫描 OCI 账号闲置资源 |
+| POST | `/api/oci/:account/resources/cleanup` | 清理选中的 OCI 闲置资源 |
 
 ## 7. OCI 控制台：概览、IAM 与对象存储
 
@@ -179,3 +183,33 @@
 | POST | `/api/dns/delete-binding` | 删除指定 DNS 绑定 |
 | GET | `/api/vm/:provider/:account/:name/dns` | 获取指定 VM 的 DNS 绑定（`A` / `AAAA`） |
 | POST | `/api/vm/:provider/:account/:name/dns` | 保存指定 VM 的 DNS 绑定 |
+
+## 10. Azure / GCP 创建实例、资源清理与成本监控
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/azure/:account/create-options` | 获取 Azure 创建实例可用资源组、区域、规格与镜像选项 |
+| POST | `/api/azure/:account/default-network` | 初始化 Azure 默认虚拟网络与子网 |
+| POST | `/api/azure/:account/launch-instance` | 创建 Azure 虚拟机实例 |
+| GET | `/api/azure/:account/cost-overview` | 查询 Azure 当月费用与赠金概览 |
+| GET | `/api/azure/:account/resources` | 扫描 Azure 闲置或计费资源 |
+| POST | `/api/azure/:account/resources/cleanup` | 按模式清理 Azure 孤立或计费资源 |
+| GET | `/api/azure/:account/monitor/config` | 获取 Azure 赠金/费用监控配置 |
+| POST | `/api/azure/:account/monitor/config` | 保存 Azure 赠金/费用监控配置并写入 `config.conf` |
+| POST | `/api/azure/:account/monitor/start` | 启动 Azure 赠金/费用周期监控 |
+| POST | `/api/azure/:account/monitor/stop` | 停止 Azure 赠金/费用周期监控 |
+| GET | `/api/azure/:account/monitor/status` | 查询 Azure 赠金/费用监控运行状态与触发日志 |
+| GET | `/api/gcp/:account/create-options` | 获取 GCP 创建实例可用区域、机型与镜像选项 |
+| POST | `/api/gcp/:account/launch-instance` | 创建 GCP 虚拟机实例 |
+| GET | `/api/gcp/:account/resources` | 扫描 GCP 闲置资源（静态 IP、未挂载磁盘等） |
+| POST | `/api/gcp/:account/resources/cleanup` | 清理选中的 GCP 闲置资源 |
+
+## 11. 通知中心与 Telegram Bot
+
+| 方法 | 路径 | 说明 |
+| --- | --- | --- |
+| GET | `/api/notify/config` | 获取脱敏后的通知与 TG Bot 配置、触发点定义、代理选项、Bot 状态及最近日志 |
+| PUT | `/api/notify/config` | 校验并保存 `config/notify.conf`，同时热重载通知调度器与 Telegram Bot |
+| POST | `/api/notify/test-channel` | 测试指定单向通知渠道连通性与推送（支持代理） |
+| POST | `/api/notify/test-bot` | 检测 Telegram Bot 连通性（`getMe`）并按需发送测试消息 |
+| GET | `/api/notify/logs` | 查询最近推送记录与 TG Bot 轮询状态 |

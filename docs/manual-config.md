@@ -5,6 +5,7 @@
 > - **登录认证与系统更新**：WebUI 左侧「系统设置」→「登录认证」「程序更新」
 > - **代理池与账号代理绑定**：WebUI 左侧「代理池」
 > - **Cloudflare 账号与 DNS 绑定**：WebUI 左侧「DNS 管理」或实例卡片上的「DNS 绑定」
+> - **通知中心与交互式 Telegram Bot**：WebUI 左侧「通知与 Bot」
 >
 > 以下内容适用于**无界面初始化预置、批量迁移或手动排查配置文件**场景。完整字段细节亦可参阅 [CONFIGURATION.md](../CONFIGURATION.md)。
 
@@ -25,6 +26,7 @@ config/
 ├── config.conf          # 主配置：云账号（Azure/GCP/OCI）、监控参数与登录认证
 ├── dns.conf             # DNS 配置：Cloudflare 账号 + DNS 绑定（A / AAAA）
 ├── proxy.conf           # 代理池 + 账号代理绑定（由 WebUI 或手动维护）
+├── notify.conf          # 通知触发点、交互式 Telegram Bot 与单向推送渠道配置
 ├── vm_cache.json        # 实例列表概览持久化缓存
 ├── oci_create_tasks.json# OCI 创建/抢购任务持久化记录
 └── keys/                # 密钥文件目录（Docker 路径为 /app/config/keys/xxx.pem）
@@ -181,6 +183,50 @@ dns=end
 
 ---
 
+## 通知与 Telegram Bot 配置（`config/notify.conf`）
+
+推荐在 WebUI 左侧 **「通知与 Bot」** 页面可视化维护并一键热重载；如需预置可参考仓库内的 [config/notify.example.conf](../config/notify.example.conf)：
+
+```ini
+triggers=begin
+[global]
+enabled_events=oci_task_succeeded,oci_dt_alert,azure_credit_alert,vm_change_ip,auth_login
+triggers=end
+
+telegram_bot=begin
+[default]
+enabled=true
+bot_token=123456:ABC-DEF
+api_host=https://api.telegram.org
+proxy=proxy-example
+fallback=none
+allowed_user_ids=123456789
+allowed_chat_ids=
+auto_notify=true
+notify_chat_ids=
+notify_events=oci_task_succeeded,oci_dt_alert,azure_credit_alert,vm_change_ip,auth_login
+notify_cooldown_sec=300
+telegram_bot=end
+
+notify_channel=begin
+[bark-1]
+name=iPhone Bark
+type=bark
+enabled=true
+proxy=none
+fallback=none
+cooldown_sec=300
+events=oci_task_succeeded,azure_credit_alert
+param.bark_push=https://api.day.app/your_key
+notify_channel=end
+```
+
+- **支持的触发点（`enabled_events` / `events`）**：`oci_task_succeeded`（OCI 抢购成功）、`oci_dt_alert`（OCI 流量告警）、`azure_credit_alert`（Azure 赠金/费用告警）、`vm_change_ip`（更换公网 IP）、`vm_power`（开关机/重启）、`auth_login`（面板登录提醒/锁定告警）。
+- **支持的单向渠道类型（`type`）**：`bark`、`wecom_bot`、`wecom_app`、`feishu`、`telegram`、`pushplus`、`custom`。
+- **TG Bot 交互指令**：`/help`、`/oracle`、`/azure`、`/gcp`（需配置 `allowed_user_ids` 或 `allowed_chat_ids` 白名单后才会响应）。
+
+---
+
 ## 热重载配置文件
 
-程序不会主动轮询磁盘修改。手动修改 `config/config.conf`、`config/dns.conf` 或 `config/proxy.conf` 后，请在 WebUI 左侧「系统设置」右上角点击 **「重载配置」** 使其生效；若配置解析报错，程序会继续沿用上一次成功加载的配置。
+程序不会主动轮询磁盘修改。手动修改 `config/config.conf`、`config/dns.conf`、`config/proxy.conf` 或 `config/notify.conf` 后，请在 WebUI 左侧「系统设置」右上角点击 **「重载配置」** 使其生效；若配置解析报错，程序会继续沿用上一次成功加载的配置。

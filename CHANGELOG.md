@@ -4,6 +4,21 @@
 
 ## [Unreleased]
 
+## [v1.2.0] - 2026-11-19
+
+### 新增
+- **多渠道单向通知中心**：参考 `webhook-notify` 接入 `bark`、`wecom_bot`（企业微信机器人）、`wecom_app`（企业微信应用）、`feishu`（飞书机器人）、`telegram`、`pushplus` 与 `custom`（自定义 Webhook）7 种推送渠道；支持每个渠道独立绑定代理池节点与 Fallback、冷却防刷屏、账号过滤及连通性测试，并在面板展示最近推送记录。
+- **可手动配置的通知触发点**：支持在全局及各渠道/Bot 维度手动勾选 6 类触发事件：`oci_task_succeeded`（OCI 抢购成功，失败重试不通知）、`oci_dt_alert`（OCI 流量告警与自动停机）、`azure_credit_alert`（Azure 赠金/费用阈值告警与自动动作）、`vm_change_ip`（更换公网 IP）、`vm_power`（实例开关机/重启）及 `auth_login`（面板登录成功与异常锁定告警）；配置独立保存在 `config/notify.conf`（附 [notify.example.conf](config/notify.example.conf)）并支持 WebUI 可视化保存与热重载。
+- **可走代理的交互式 Telegram Bot**：支持绑定代理池（HTTP / HTTPS / SOCKS5）与备用回退策略进行长轮询交互，强制 `allowedUserIds` / `allowedChatIds` 白名单鉴权与敏感操作二次确认；支持 `/help`、`/oracle`、`/azure`、`/gcp` 菜单式交互，开放实例查看/开关机重启/换 IP（若绑定 Cloudflare DNS，换 IP 成功后提供一键「同步更新 DNS」按钮）、OCI 抢购任务启停与日志查看、OCI 流量与 Azure 赠金监控状态/日志查看及立即检测；开启 `auto_notify` 后自动复用该 Bot 接收触发点通知。
+- **Azure 与 GCP 更多管理能力**：新增跨云集中式 IP 管理（Azure / GCP / OCI 统一查看与更换 IPv4/IPv6、保留 IP 与 DNS 联动）；新增 Azure 创建实例、默认网络初始化、成本与赠金监控（告警 / 自动停机 / 孤立资源或计费资源清理）；新增 GCP 创建实例与闲置资源扫描清理、OCI 闲置资源扫描清理。
+- **OCI 启动盘 (Boot Volume) 管理**：支持查看实例关联启动盘及账号下全部启动盘、调整容量与性能单元、附加/卸载及删除未挂载启动盘。
+- **公网部署安全加固与文档**：新增 `netguard` SSRF 防护与 [公网部署安全指南](docs/public-deployment.md)（`BLOCK_PRIVATE_PROXY`、`TRUSTED_PROXIES`、`DISABLE_SELF_UPDATE` 等）。
+
+### 优化与安全修复
+- 修复若干安全隐患：强化代理、在线更新下载、登录认证、同源（CSRF）校验及路径/配置输入校验，完善敏感凭据脱敏回显与还原逻辑。
+- 修复 `custom` Webhook 在 JSON 模板中使用 `$title` / `$content` 时的转义问题，避免含引号或换行内容破坏 JSON 结构。
+- 优化多云防火墙、IP 管理与监控工作区的前端交互与错误提示。
+
 ## [v1.1.4] - 2026-11-17
 
 ### 新增

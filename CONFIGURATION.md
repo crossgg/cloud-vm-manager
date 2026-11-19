@@ -8,6 +8,8 @@
 config/
 ├── config.conf          # 主配置：云账号（Azure/GCP/OCI）+ 登录认证
 ├── dns.conf             # DNS 配置：Cloudflare 账号 + DNS 绑定（可通过网页管理）
+├── proxy.conf           # 代理池 + 账号代理绑定（可通过网页管理）
+├── notify.conf          # 通知中心与交互式 Telegram Bot 配置（可通过网页管理）
 └── keys/                # 密钥文件
     ├── gcp01.pem
     └── oci.pem
@@ -101,7 +103,7 @@ password_hash=生成出来的-bcrypt-哈希
 
 ## 配置重载
 
-程序不会后台轮询配置文件。修改 `config/config.conf` 或 `config/dns.conf` 后，需要在网页"管理"页面点击"重载配置"按钮，程序才会重新读取配置。
+程序不会后台轮询配置文件。修改 `config/config.conf`、`config/dns.conf`、`config/proxy.conf` 或 `config/notify.conf` 后，需要在网页"系统设置"页面点击"重载配置"按钮，程序才会重新读取配置。
 
 在网页"管理"页面保存登录认证配置时，后端会先写入配置文件，然后自动执行一次配置重载，因此保存后会立即生效。重载失败时，程序会继续使用上一次成功加载的配置，并在管理页面显示错误信息。
 
@@ -281,3 +283,7 @@ ttl=1                            # 1 表示 Cloudflare automatic TTL
 proxied=false                    # 是否开启 Cloudflare proxy
 dns=end
 ```
+
+## 通知与 Telegram Bot
+
+通知中心与交互式 Telegram Bot 配置独立存放在 `config/notify.conf`，推荐直接在网页「通知与 Bot」页面可视化管理并热重载；完整字段与示例参见 [config/notify.example.conf](config/notify.example.conf) 及 [手动配置说明](docs/manual-config.md#通知与-telegram-bot-配置confignotifyconf)。

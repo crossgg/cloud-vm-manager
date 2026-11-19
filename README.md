@@ -2,9 +2,9 @@
 
 ![界面示例](docs/pic/示例.jpg)
 
-轻量级多云虚拟机管理面板，支持 **Azure**、**GCP**、**OCI (Oracle Cloud)** 实例运维、IPv4/IPv6 与 DNS 联动、防火墙规则管理、代理池、OCI 控制台扩展（账户概览、抢购任务、IAM 与对象存储）等功能。
+轻量级多云虚拟机管理面板，支持 **Azure**、**GCP**、**OCI (Oracle Cloud)** 实例运维、集中式 IPv4/IPv6 与 Cloudflare DNS 联动、多云防火墙与创建/资源清理、代理池、OCI 控制台扩展（账户概览、抢购任务、IAM、启动盘与对象存储），以及**多渠道通知中心**与**可走代理的交互式 Telegram Bot**。
 
-> **说明**：云账号、密钥文件上传、代理池、Cloudflare DNS、登录认证及在线更新现已**全部支持在 WebUI 中可视化配置与热重载**，无需再手写配置文件即可开箱使用。
+> **说明**：云账号、密钥文件上传、代理池、Cloudflare DNS、通知与 Telegram Bot、登录认证及在线更新现已**全部支持在 WebUI 中可视化配置与热重载**，无需再手写配置文件即可开箱使用。
 
 ## 文档索引
 
@@ -54,7 +54,7 @@ http://localhost:3000
 mkdir -p config/keys runtime
 ```
 
-- `./config`：存放配置文件（`config.conf`、`dns.conf`、`proxy.conf`）、缓存文件与 `keys/` 密钥文件；手动配置密钥路径时请写容器内路径 `/app/config/keys/xxx.pem`。
+- `./config`：存放配置文件（`config.conf`、`dns.conf`、`proxy.conf`、`notify.conf`）、缓存文件与 `keys/` 密钥文件；手动配置密钥路径时请写容器内路径 `/app/config/keys/xxx.pem`。
 - `./runtime`：保存通过 WebUI「系统设置 → 程序更新」下载的新版二进制文件与前端资源，容器重建或重启后仍会自动优先运行该版本。
 
 ### 方式一：Docker Compose（推荐）
