@@ -212,30 +212,88 @@ func saveYAMLUpdateConfig(path string, data []byte, update UpdateConfig) error {
 	return writeFileAtomic(path, next, 0600)
 }
 
-// SaveDNSConfig writes the entire dns.conf file from the given cloudflare accounts and dns bindings.
-// It performs deduplication: duplicate cloudflare names or dns binding names are merged (last wins).
+// SaveDNSConfig writes cloudflare accounts and dns bindings while preserving non-cloudflare DNS accounts on disk.
 func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings []DNSBinding) error {
 	if path == "" {
 		return fmt.Errorf("dns config path is empty")
 	}
 
-	// Deduplicate cloudflare accounts by name
-	cfMap := make(map[string]CloudflareConfig)
-	var cfOrder []string
+	var mergedAccounts []DNSAccountConfig
 	for _, cf := range cloudflareAccounts {
 		if cf.Name == "" {
 			continue
 		}
-		if HasUnsafeConfigValue(cf.Name) {
-			return fmt.Errorf("cloudflare account name %q contains unsupported characters", cf.Name)
+		mergedAccounts = append(mergedAccounts, DNSAccountConfig{
+			Name:     cf.Name,
+			Provider: "cloudflare",
+			Remark:   cf.Remark,
+			Domains:  cf.Domains,
+			APIToken: cf.APIToken,
+			ZoneID:   cf.ZoneID,
+		})
+	}
+	if existingRaw, err := os.ReadFile(path); err == nil {
+		tmpCfg := &Config{}
+		if mergeDNSConfig(tmpCfg, string(existingRaw)) == nil {
+			for _, acc := range tmpCfg.DNSAccounts {
+				if acc.Provider != "cloudflare" {
+					mergedAccounts = append(mergedAccounts, acc)
+				}
+			}
 		}
-		if HasUnsafeConfigLineValue(cf.Remark) || HasUnsafeConfigLineValue(cf.APIToken) || HasUnsafeConfigLineValue(cf.ZoneID) {
-			return fmt.Errorf("cloudflare account %q contains unsupported control characters", cf.Name)
+	}
+	return SaveAllDNSConfig(path, mergedAccounts, bindings)
+}
+
+// SaveAllDNSConfig writes all DNS accounts (cloudflare + alidns + tencent + dnspod) and dns bindings to dns.conf.
+func SaveAllDNSConfig(path string, dnsAccounts []DNSAccountConfig, bindings []DNSBinding) error {
+	if path == "" {
+		return fmt.Errorf("dns config path is empty")
+	}
+
+	cfMap := make(map[string]DNSAccountConfig)
+	var cfOrder []string
+	otherMap := make(map[string]DNSAccountConfig)
+	var otherOrder []string
+
+	for _, acc := range dnsAccounts {
+		if acc.Name == "" {
+			continue
 		}
-		if _, exists := cfMap[cf.Name]; !exists {
-			cfOrder = append(cfOrder, cf.Name)
+		if HasUnsafeConfigValue(acc.Name) {
+			return fmt.Errorf("dns account name %q contains unsupported characters", acc.Name)
 		}
-		cfMap[cf.Name] = cf
+		if HasUnsafeConfigLineValue(acc.Remark) || HasUnsafeConfigLineValue(acc.Provider) ||
+			HasUnsafeConfigLineValue(acc.Edition) || HasUnsafeConfigLineValue(acc.APIToken) ||
+			HasUnsafeConfigLineValue(acc.ZoneID) || HasUnsafeConfigLineValue(acc.AccessKeyID) ||
+			HasUnsafeConfigLineValue(acc.AccessKeySecret) || HasUnsafeConfigLineValue(acc.SecretID) ||
+			HasUnsafeConfigLineValue(acc.SecretKey) || HasUnsafeConfigLineValue(acc.TokenID) ||
+			HasUnsafeConfigLineValue(acc.Token) {
+			return fmt.Errorf("dns account %q contains unsupported control characters", acc.Name)
+		}
+		for _, d := range acc.Domains {
+			if HasUnsafeConfigLineValue(d) {
+				return fmt.Errorf("dns account %q domain %q contains unsupported control characters", acc.Name, d)
+			}
+		}
+
+		prov := strings.ToLower(strings.TrimSpace(acc.Provider))
+		if prov == "" {
+			prov = "cloudflare"
+		}
+		acc.Provider = prov
+
+		if prov == "cloudflare" {
+			if _, exists := cfMap[acc.Name]; !exists {
+				cfOrder = append(cfOrder, acc.Name)
+			}
+			cfMap[acc.Name] = acc
+		} else {
+			if _, exists := otherMap[acc.Name]; !exists {
+				otherOrder = append(otherOrder, acc.Name)
+			}
+			otherMap[acc.Name] = acc
+		}
 	}
 
 	// Deduplicate dns bindings by name
@@ -248,7 +306,8 @@ func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings 
 		if HasUnsafeConfigValue(b.Name) {
 			return fmt.Errorf("dns binding name %q contains unsupported characters", b.Name)
 		}
-		if HasUnsafeConfigLineValue(b.Cloudflare) || HasUnsafeConfigLineValue(b.Provider) ||
+		targetAcc := b.TargetAccountName()
+		if HasUnsafeConfigLineValue(targetAcc) || HasUnsafeConfigLineValue(b.Provider) ||
 			HasUnsafeConfigLineValue(b.Account) || HasUnsafeConfigLineValue(b.VM) ||
 			HasUnsafeConfigLineValue(b.Domain) || HasUnsafeConfigLineValue(b.Type) {
 			return fmt.Errorf("dns binding %q contains unsupported control characters", b.Name)
@@ -261,7 +320,7 @@ func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings 
 
 	var sb strings.Builder
 
-	// Write cloudflare block
+	// Write cloudflare block (backward-compatible)
 	sb.WriteString("cloudflare=begin\n")
 	for _, name := range cfOrder {
 		cf := cfMap[name]
@@ -271,17 +330,51 @@ func SaveDNSConfig(path string, cloudflareAccounts []CloudflareConfig, bindings 
 		}
 		sb.WriteString("api_token=" + cf.APIToken + "\n")
 		sb.WriteString("zone_id=" + cf.ZoneID + "\n")
+		if len(cf.Domains) > 0 {
+			sb.WriteString("domains=" + strings.Join(cf.Domains, ",") + "\n")
+		}
 	}
-	sb.WriteString("cloudflare=end\n")
+	sb.WriteString("cloudflare=end\n\n")
 
-	sb.WriteString("\n")
+	// Write multi-cloud dns_accounts block
+	if len(otherOrder) > 0 {
+		sb.WriteString("dns_accounts=begin\n")
+		for _, name := range otherOrder {
+			acc := otherMap[name]
+			sb.WriteString("[" + acc.Name + "]\n")
+			sb.WriteString("provider=" + acc.Provider + "\n")
+			if acc.Edition != "" {
+				sb.WriteString("edition=" + acc.Edition + "\n")
+			}
+			if acc.Remark != "" {
+				sb.WriteString("remark=" + acc.Remark + "\n")
+			}
+			if len(acc.Domains) > 0 {
+				sb.WriteString("domains=" + strings.Join(acc.Domains, ",") + "\n")
+			}
+			switch acc.Provider {
+			case "alidns":
+				sb.WriteString("access_key_id=" + acc.AccessKeyID + "\n")
+				sb.WriteString("access_key_secret=" + acc.AccessKeySecret + "\n")
+			case "tencent":
+				sb.WriteString("secret_id=" + acc.SecretID + "\n")
+				sb.WriteString("secret_key=" + acc.SecretKey + "\n")
+			case "dnspod":
+				sb.WriteString("token_id=" + acc.TokenID + "\n")
+				sb.WriteString("token=" + acc.Token + "\n")
+			}
+		}
+		sb.WriteString("dns_accounts=end\n\n")
+	}
 
 	// Write dns block
 	sb.WriteString("dns=begin\n")
 	for _, name := range dnsOrder {
 		b := dnsMap[name]
+		targetAcc := b.TargetAccountName()
 		sb.WriteString("[" + b.Name + "]\n")
-		sb.WriteString("cloudflare=" + b.Cloudflare + "\n")
+		sb.WriteString("dns_account=" + targetAcc + "\n")
+		sb.WriteString("cloudflare=" + targetAcc + "\n")
 		sb.WriteString("provider=" + b.Provider + "\n")
 		sb.WriteString("account=" + b.Account + "\n")
 		sb.WriteString("vm=" + b.VM + "\n")

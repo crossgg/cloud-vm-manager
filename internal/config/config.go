@@ -21,6 +21,7 @@ type Config struct {
 	GCPAccounts   []GCPConfig        `yaml:"-"`
 	OCIAccounts   []OCIConfig        `yaml:"-"`
 	Cloudflare    []CloudflareConfig `yaml:"-"`
+	DNSAccounts   []DNSAccountConfig `yaml:"-"`
 	DNSBindings   []DNSBinding       `yaml:"-"`
 	Proxies       []ProxyConfig      `yaml:"-"`
 	ProxyBindings []ProxyBinding     `yaml:"-"`
@@ -115,11 +116,29 @@ type CloudflareConfig struct {
 	Remark   string
 	APIToken string
 	ZoneID   string
+	Domains  []string
+}
+
+type DNSAccountConfig struct {
+	Name            string
+	Provider        string // "cloudflare" | "alidns" | "tencent" | "dnspod"
+	Edition         string // "" | "cn" | "intl"
+	Remark          string
+	Domains         []string
+	APIToken        string
+	ZoneID          string
+	AccessKeyID     string
+	AccessKeySecret string
+	SecretID        string
+	SecretKey       string
+	TokenID         string
+	Token           string
 }
 
 type DNSBinding struct {
 	Name       string
 	Cloudflare string
+	DNSAccount string
 	Provider   string
 	Account    string
 	VM         string
@@ -129,14 +148,37 @@ type DNSBinding struct {
 	Proxied    bool
 }
 
+func (b DNSBinding) TargetAccountName() string {
+	return valueOrDefault(strings.TrimSpace(b.DNSAccount), strings.TrimSpace(b.Cloudflare))
+}
+
 func (b DNSBinding) Matches(provider, account, vmID string) bool {
-	if b.Provider != "" && !strings.EqualFold(b.Provider, provider) {
+	if strings.TrimSpace(b.Provider) == "" || strings.TrimSpace(b.Account) == "" || strings.TrimSpace(b.VM) == "" {
 		return false
 	}
-	if b.Account != "" && b.Account != account {
-		return false
+	return strings.EqualFold(b.Provider, provider) && b.Account == account && b.VM == vmID
+}
+
+func SplitDomainList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
 	}
-	return b.VM == "" || b.VM == vmID
+	replacer := strings.NewReplacer(";", ",", "\n", ",", "\r", ",", " ", ",")
+	parts := strings.Split(replacer.Replace(raw), ",")
+	seen := make(map[string]struct{})
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		d := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(p), "."))
+		if d == "" {
+			continue
+		}
+		if _, ok := seen[d]; ok {
+			continue
+		}
+		seen[d] = struct{}{}
+		out = append(out, d)
+	}
+	return out
 }
 
 type AuthConfig struct {
@@ -241,8 +283,9 @@ func LoadConfigWithPath() (*Config, string, error) {
 // If the main config already had cloudflare/dns from the old format, dns.conf takes precedence.
 func mergeDNSConfig(cfg *Config, content string) error {
 	sections := map[string]map[string]map[string]string{
-		"cloudflare": {},
-		"dns":        {},
+		"cloudflare":   {},
+		"dns_accounts": {},
+		"dns":          {},
 	}
 
 	currentProvider := ""
@@ -257,8 +300,11 @@ func mergeDNSConfig(cfg *Config, content string) error {
 		lower := strings.ToLower(line)
 		if strings.HasSuffix(lower, "=begin") {
 			provider := strings.TrimSpace(strings.TrimSuffix(lower, "=begin"))
-			if provider != "cloudflare" && provider != "dns" {
-				return fmt.Errorf("dns.conf line %d: unsupported block %q (only cloudflare and dns allowed)", lineNo+1, provider)
+			if provider == "dns_account" {
+				provider = "dns_accounts"
+			}
+			if provider != "cloudflare" && provider != "dns_accounts" && provider != "dns" {
+				return fmt.Errorf("dns.conf line %d: unsupported block %q (only cloudflare, dns_accounts and dns allowed)", lineNo+1, provider)
 			}
 			currentProvider = provider
 			currentName = ""
@@ -266,6 +312,9 @@ func mergeDNSConfig(cfg *Config, content string) error {
 		}
 		if strings.HasSuffix(lower, "=end") {
 			endProvider := strings.TrimSpace(strings.TrimSuffix(lower, "=end"))
+			if endProvider == "dns_account" {
+				endProvider = "dns_accounts"
+			}
 			if currentProvider != endProvider {
 				return fmt.Errorf("dns.conf line %d: mismatched end block %q", lineNo+1, endProvider)
 			}
@@ -300,17 +349,69 @@ func mergeDNSConfig(cfg *Config, content string) error {
 		sections[currentProvider][currentName][strings.TrimSpace(key)] = strings.Trim(strings.TrimSpace(value), `"`)
 	}
 
-	// Replace cloudflare from dns.conf
-	if len(sections["cloudflare"]) > 0 {
+	// Replace cloudflare & dns_accounts from dns.conf
+	if len(sections["cloudflare"]) > 0 || len(sections["dns_accounts"]) > 0 {
 		cfg.Cloudflare = nil
+		cfg.DNSAccounts = nil
+		seenNames := make(map[string]struct{})
+
 		for _, name := range sortedSectionNames(sections["cloudflare"]) {
 			values := sections["cloudflare"][name]
-			cfg.Cloudflare = append(cfg.Cloudflare, CloudflareConfig{
+			domains := SplitDomainList(valueOrDefault(values["domains"], values["domain"]))
+			cf := CloudflareConfig{
 				Name:     name,
 				Remark:   values["remark"],
 				APIToken: values["api_token"],
 				ZoneID:   values["zone_id"],
+				Domains:  domains,
+			}
+			cfg.Cloudflare = append(cfg.Cloudflare, cf)
+			cfg.DNSAccounts = append(cfg.DNSAccounts, DNSAccountConfig{
+				Name:     name,
+				Provider: "cloudflare",
+				Remark:   cf.Remark,
+				Domains:  domains,
+				APIToken: cf.APIToken,
+				ZoneID:   cf.ZoneID,
 			})
+			seenNames[name] = struct{}{}
+		}
+
+		for _, name := range sortedSectionNames(sections["dns_accounts"]) {
+			values := sections["dns_accounts"][name]
+			prov := strings.ToLower(strings.TrimSpace(values["provider"]))
+			if prov == "" {
+				prov = "alidns"
+			}
+			domains := SplitDomainList(valueOrDefault(values["domains"], values["domain"]))
+			acc := DNSAccountConfig{
+				Name:            name,
+				Provider:        prov,
+				Edition:         strings.ToLower(strings.TrimSpace(values["edition"])),
+				Remark:          values["remark"],
+				Domains:         domains,
+				APIToken:        values["api_token"],
+				ZoneID:          values["zone_id"],
+				AccessKeyID:     values["access_key_id"],
+				AccessKeySecret: values["access_key_secret"],
+				SecretID:        values["secret_id"],
+				SecretKey:       values["secret_key"],
+				TokenID:         values["token_id"],
+				Token:           values["token"],
+			}
+			if _, exists := seenNames[name]; !exists {
+				cfg.DNSAccounts = append(cfg.DNSAccounts, acc)
+				seenNames[name] = struct{}{}
+				if prov == "cloudflare" {
+					cfg.Cloudflare = append(cfg.Cloudflare, CloudflareConfig{
+						Name:     acc.Name,
+						Remark:   acc.Remark,
+						APIToken: acc.APIToken,
+						ZoneID:   acc.ZoneID,
+						Domains:  acc.Domains,
+					})
+				}
+			}
 		}
 	}
 
@@ -320,9 +421,12 @@ func mergeDNSConfig(cfg *Config, content string) error {
 		for _, name := range sortedSectionNames(sections["dns"]) {
 			values := sections["dns"][name]
 			ttl := intValueOrDefault(values["ttl"], 1)
+			cfRef := valueOrDefault(values["cloudflare"], values["cf"])
+			dnsAccRef := valueOrDefault(values["dns_account"], cfRef)
 			cfg.DNSBindings = append(cfg.DNSBindings, DNSBinding{
 				Name:       name,
-				Cloudflare: valueOrDefault(values["cloudflare"], values["cf"]),
+				Cloudflare: cfRef,
+				DNSAccount: dnsAccRef,
 				Provider:   strings.ToLower(values["provider"]),
 				Account:    values["account"],
 				VM:         valueOrDefault(values["vm"], valueOrDefault(values["vm_id"], values["instance"])),
@@ -486,19 +590,32 @@ func parseBlockConfig(content string) (*Config, error) {
 	}
 	for _, name := range sortedSectionNames(sections["cloudflare"]) {
 		values := sections["cloudflare"][name]
-		cfg.Cloudflare = append(cfg.Cloudflare, CloudflareConfig{
+		domains := SplitDomainList(valueOrDefault(values["domains"], values["domain"]))
+		cf := CloudflareConfig{
 			Name:     name,
 			Remark:   values["remark"],
 			APIToken: values["api_token"],
 			ZoneID:   values["zone_id"],
+			Domains:  domains,
+		}
+		cfg.Cloudflare = append(cfg.Cloudflare, cf)
+		cfg.DNSAccounts = append(cfg.DNSAccounts, DNSAccountConfig{
+			Name:     name,
+			Provider: "cloudflare",
+			Remark:   cf.Remark,
+			Domains:  domains,
+			APIToken: cf.APIToken,
+			ZoneID:   cf.ZoneID,
 		})
 	}
 	for _, name := range sortedSectionNames(sections["dns"]) {
 		values := sections["dns"][name]
 		ttl := intValueOrDefault(values["ttl"], 1)
+		cfRef := valueOrDefault(values["cloudflare"], values["cf"])
 		cfg.DNSBindings = append(cfg.DNSBindings, DNSBinding{
 			Name:       name,
-			Cloudflare: valueOrDefault(values["cloudflare"], values["cf"]),
+			Cloudflare: cfRef,
+			DNSAccount: valueOrDefault(values["dns_account"], cfRef),
 			Provider:   strings.ToLower(values["provider"]),
 			Account:    values["account"],
 			VM:         valueOrDefault(values["vm"], valueOrDefault(values["vm_id"], values["instance"])),

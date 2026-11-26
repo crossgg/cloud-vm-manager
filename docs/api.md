@@ -171,18 +171,28 @@
 | POST | `/api/azure/:account/security-groups/:nsg/rules` | 新增或更新 Azure NSG 规则 |
 | DELETE | `/api/azure/:account/security-groups/:nsg/rules/:rule` | 删除 Azure NSG 规则 |
 
-## 9. Cloudflare DNS 管理
+## 9. 多云 DNS 管理
 
 | 方法 | 路径 | 说明 |
 | --- | --- | --- |
-| GET | `/api/dns/cloudflare` | 获取 Cloudflare 账号列表（敏感字段脱敏） |
-| POST | `/api/dns/cloudflare` | 保存 Cloudflare 账号 |
-| GET | `/api/dns/bindings` | 获取所有 DNS 绑定记录 |
-| POST | `/api/dns/bindings` | 批量保存 DNS 绑定记录 |
-| GET | `/api/dns/raw` | 预览脱敏后的 `config/dns.conf` |
+| GET | `/api/dns/accounts` | 获取全部多云 DNS 账号（CF/阿里云/腾讯云/DNSPod，密钥脱敏） |
+| POST | `/api/dns/accounts` | 新增、编辑或删除多云 DNS 账号并重载配置 |
+| GET | `/api/dns/console/domains` | 获取指定账号下已配置的域名列表（不枚举账号全量域名） |
+| GET | `/api/dns/console/records` | 查询指定账号与配置域名的解析记录 |
+| POST | `/api/dns/console/records` | 在指定域名下新增解析记录 |
+| PUT | `/api/dns/console/records` | 修改指定解析记录 |
+| DELETE | `/api/dns/console/records` | 删除指定解析记录 |
+| PATCH | `/api/dns/console/records/status` | 启用或暂停解析记录（阿里云 / 腾讯云 / DNSPod 支持） |
+| GET | `/api/dns/console/export` | 导出当前域名为 `.zone` BIND Zone 文本 |
+| POST | `/api/dns/console/import-preview` | 解析 `.zone`/`.txt` 并对比现网生成导入预览（标记新增/冲突/跳过） |
+| POST | `/api/dns/console/import` | 执行批量导入（默认跳过冲突，支持 `overwrite=true` 覆盖） |
+| GET | `/api/dns/cloudflare` | 兼容旧版：获取 Cloudflare 账号列表（敏感字段脱敏） |
+| POST | `/api/dns/cloudflare` | 兼容旧版：保存 Cloudflare 账号 |
+| GET | `/api/dns/bindings` | 获取所有 VM DNS 绑定记录 |
+| POST | `/api/dns/bindings` | 批量保存 VM DNS 绑定记录（严格校验不可为空通配） |
 | POST | `/api/dns/delete-binding` | 删除指定 DNS 绑定 |
-| GET | `/api/vm/:provider/:account/:name/dns` | 获取指定 VM 的 DNS 绑定（`A` / `AAAA`） |
-| POST | `/api/vm/:provider/:account/:name/dns` | 保存指定 VM 的 DNS 绑定 |
+| GET | `/api/vm/:provider/:account/:name/dns` | 获取指定 VM 的 DNS 绑定及可用 DNS 账号列表 |
+| POST | `/api/vm/:provider/:account/:name/dns` | 保存指定 VM 的 DNS 绑定（`A` / `AAAA`） |
 
 ## 10. Azure / GCP 创建实例、资源清理与成本监控
 

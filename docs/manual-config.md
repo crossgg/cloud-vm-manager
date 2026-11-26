@@ -4,7 +4,7 @@
 > - **云账号与密钥文件**：WebUI 左侧「系统设置」→「云账号与配置管理」（可直接上传 `.pem` / `.json` 密钥到 `config/keys/`）
 > - **登录认证与系统更新**：WebUI 左侧「系统设置」→「登录认证」「程序更新」
 > - **代理池与账号代理绑定**：WebUI 左侧「代理池」
-> - **Cloudflare 账号与 DNS 绑定**：WebUI 左侧「DNS 管理」或实例卡片上的「DNS 绑定」
+> - **多云 DNS 账号与绑定**：WebUI 左侧「DNS 管理」或实例卡片上的「DNS 绑定」
 > - **通知中心与交互式 Telegram Bot**：WebUI 左侧「通知与 Bot」
 >
 > 以下内容适用于**无界面初始化预置、批量迁移或手动排查配置文件**场景。完整字段细节亦可参阅 [CONFIGURATION.md](../CONFIGURATION.md)。
@@ -24,7 +24,7 @@ config/config.conf -> config/config.ini -> config/config.yaml -> config.conf -> 
 ```text
 config/
 ├── config.conf          # 主配置：云账号（Azure/GCP/OCI）、监控参数与登录认证
-├── dns.conf             # DNS 配置：Cloudflare 账号 + DNS 绑定（A / AAAA）
+├── dns.conf             # DNS 配置：多云 DNS 账号（CF/阿里云/腾讯云/DNSPod）+ DNS 绑定（A / AAAA）
 ├── proxy.conf           # 代理池 + 账号代理绑定（由 WebUI 或手动维护）
 ├── notify.conf          # 通知触发点、交互式 Telegram Bot 与单向推送渠道配置
 ├── vm_cache.json        # 实例列表概览持久化缓存
@@ -153,9 +153,9 @@ proxy_binding=end
 
 ---
 
-## Cloudflare DNS 配置（`config/dns.conf`）
+## 多云 DNS 配置（`config/dns.conf`）
 
-仅支持 Cloudflare **API Token**（需目标 Zone 的 DNS Edit 权限），不使用 Global API Key：
+支持在 WebUI「DNS 管理 -> DNS 账号配置」直接增改并热重载，也可手动在 `config/dns.conf` 中维护；支持 **Cloudflare**（API Token + Zone ID）、**阿里云 DNS (`alidns`)**、**腾讯云 DNS (`tencent`，`cn`/`intl`)** 与 **DNSPod (`dnspod`，`cn`/`intl`)**：
 
 ```ini
 cloudflare=begin
@@ -163,11 +163,20 @@ cloudflare=begin
 remark=主站 Cloudflare
 api_token=your-cloudflare-api-token
 zone_id=your-zone-id
+domains=example.com
 cloudflare=end
+
+dns_accounts=begin
+[ali-prod]
+provider=alidns
+access_key_id=LTAI...
+access_key_secret=your-ak-secret
+domains=example.com,example.org
+dns_accounts=end
 
 dns=begin
 [my-binding]
-cloudflare=cf01
+dns_account=cf01
 provider=oci
 account=oci-jp
 vm=ocid1.instance.oc1...
@@ -178,7 +187,8 @@ proxied=false
 dns=end
 ```
 
-- `vm` 字段规范：Azure 填 VM 名称；GCP 填 `zone|instance-name`；OCI 填 Instance OCID。
+- 非 Cloudflare 账号必须在 `domains` 中明确指定要管理的根域名，程序不会枚举账号全量域名。
+- `vm` 字段规范：Azure 填 VM 名称；GCP 填 `zone|instance-name`；OCI 填 Instance OCID（所有绑定字段均需精确匹配，不支持留空通配）。
 - `type` 支持 `A`（绑定 IPv4）与 `AAAA`（绑定 IPv6）。
 
 ---

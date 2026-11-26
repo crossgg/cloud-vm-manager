@@ -7,7 +7,7 @@
 ```text
 config/
 ├── config.conf          # 主配置：云账号（Azure/GCP/OCI）+ 登录认证
-├── dns.conf             # DNS 配置：Cloudflare 账号 + DNS 绑定（可通过网页管理）
+├── dns.conf             # DNS 配置：多云 DNS 账号（CF/阿里云/腾讯云/DNSPod）+ DNS 绑定（可通过网页管理）
 ├── proxy.conf           # 代理池 + 账号代理绑定（可通过网页管理）
 ├── notify.conf          # 通知中心与交互式 Telegram Bot 配置（可通过网页管理）
 └── keys/                # 密钥文件
@@ -244,43 +244,69 @@ dt_monitor_stop_method=soft    # soft: SOFTSTOP；hard: STOP
 
 自动停机会停止该 OCI 账号下所有正在运行的实例。启用前建议先手动查询一次用量，并确认阈值和账号范围。
 
-## Cloudflare DNS
+## 多云 DNS 配置 (`config/dns.conf`)
 
-DNS 配置独立存放在 `config/dns.conf`，也可以通过网页 DNS 管理页面维护。
+DNS 配置独立存放在 `config/dns.conf`，推荐通过网页「DNS 管理 -> DNS 账号配置」页面维护，也支持按以下格式手动配置。
 
-只支持 API Token，不使用 Global API Key。Token 至少需要目标 zone 的 DNS edit 权限。
+支持 **Cloudflare**、**阿里云 DNS (`alidns`)**、**腾讯云 DNS (`tencent`)**（支持 `cn` / `intl`）及 **DNSPod (`dnspod`)**（支持 `cn` / `intl`）。为避免扫描全账号域名，非 Cloudflare 账号需在 `domains` 中显式填写需要管理的根域名。
 
 ```ini
+# 兼容传统 Cloudflare 区块写法
 cloudflare=begin
 [cf01]
 remark=主站 Cloudflare                        # 可选，账号备注
-api_token=your-cloudflare-api-token           # Cloudflare API Token
+api_token=your-cloudflare-api-token           # Cloudflare API Token（需 DNS Edit 权限）
 zone_id=your-zone-id                          # Cloudflare Zone ID
+domains=example.com                           # 可选，留空时仅按 zone_id 识别该域名
 cloudflare=end
+
+# 多云 DNS 统一账号区块（v1.2.2+）
+dns_accounts=begin
+[ali-prod]
+provider=alidns
+access_key_id=LTAI...
+access_key_secret=your-ak-secret
+domains=example.com,example.org
+remark=阿里云主账号
+
+[tx-intl]
+provider=tencent
+edition=intl                                  # cn（国内版）或 intl（国际版）
+secret_id=AKID...
+secret_key=your-secret-key
+domains=example.net
+
+[dp-cn]
+provider=dnspod
+edition=cn                                    # cn（国内版）或 intl（国际版）
+token_id=123456
+token=your-dnspod-token
+domains=example.cn
+dns_accounts=end
 ```
 
-> **安全说明**：Cloudflare 的 `api_token` 和 `zone_id` 不会在网页前端显示。网页 DNS 管理页只显示账号名称和备注。dns.conf 预览也会自动脱敏敏感字段。
+> **安全说明**：API 密钥与 Token 保存后在网页端仅展示部分脱敏预览（如 `abcd****wxyz`），不会明文回显；编辑账号时若不修改密钥留空即可保持原值。
 
 ## DNS 绑定
 
-`dns` 段定义"某台机器的公网 IP 应绑定到哪个域名"。只有配置了绑定的机器，网页才会显示"更新 DNS"按钮和"换 IP 后更新 DNS"开关。
+`dns` 段定义"某台机器的公网 IP 应绑定到哪个域名"。只有严格匹配云厂商、账号与实例的绑定记录，网页才会显示"更新 DNS"按钮和"换 IP 后更新 DNS"开关。
 
 DNS 绑定可以：
 - 手动编辑 `config/dns.conf`
-- 在网页 DNS 管理页面维护绑定列表
-- 在每个 VM 卡片上点击「DNS 绑定」按钮可视化配置
+- 在网页「DNS 管理 -> VM 联动绑定」查看与删除
+- 在每个 VM 卡片上点击「DNS 绑定」按钮可视化配置（支持选用全部已配置的 DNS 服务商账号）
 
 ```ini
 dns=begin
 [gcp01-main]
-cloudflare=cf01                  # 使用哪个 cloudflare 配置
-provider=gcp                     # azure / gcp / oci
-account=gcp01                    # 对应账号名
-vm=asia-east1-a|vm-01            # Azure: VM 名称；GCP: zone|name；OCI: instance OCID
+dns_account=ali-prod             # 使用的 DNS 账号名（兼容旧字段 cloudflare=cf01）
+provider=gcp                     # azure / gcp / oci（必填，不可留空通配）
+account=gcp01                    # 对应云账号名（必填）
+vm=asia-east1-a|vm-01            # Azure: VM 名称；GCP: zone|name；OCI: instance OCID（必填）
 domain=vm.example.com            # 要更新的域名
 type=A                           # 支持 A（IPv4）与 AAAA（IPv6）记录
-ttl=1                            # 1 表示 Cloudflare automatic TTL
-proxied=false                    # 是否开启 Cloudflare proxy
+ttl=600                          # Cloudflare 可填 1 表示 Auto TTL
+proxied=false                    # 仅 Cloudflare 账号生效，其余服务商自动忽略
 dns=end
 ```
 

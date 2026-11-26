@@ -1210,51 +1210,295 @@
         <section id="dns-section" class="section">
           <div class="section-title">
             <div>
-              <h2>DNS 管理</h2>
-              <p>管理 Cloudflare 账号和 DNS 绑定配置。</p>
+              <h2>多云 DNS 管理</h2>
+              <p>统一管理 Cloudflare、阿里云 DNS、腾讯云 DNS（国内/国际）与 DNSPod（国内/国际），支持原生记录控制台、.zone/.txt 导入导出与 VM 精准联动。</p>
             </div>
-            <button id="dns-reload-btn" class="secondary-btn" type="button">重载 DNS 配置</button>
+            <button id="dns-console-reload-btn" class="secondary-btn" type="button">重载 DNS 配置</button>
           </div>
 
-          <!-- Cloudflare Accounts Panel -->
-          <div class="settings-panel dns-bindings-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>Cloudflare 账号</h3>
-                <p>配置 Cloudflare 账号、备注、API Token 和 Zone ID。API Token 和 Zone ID 在已存在时将显示为掩码，若不修改请保留掩码。</p>
-              </div>
-              <button id="add-cf-account-btn" class="secondary-btn" type="button">+ 添加账号</button>
-            </div>
-            <div id="cf-accounts-list" class="dns-items-list">
-              <div class="empty-state compact">加载中...</div>
-            </div>
-            <button id="save-cf-accounts-btn" class="primary-btn" type="button">保存 Cloudflare 配置</button>
-            <div id="cf-message" class="form-message"></div>
+          <div id="dns-workspace-tabs" class="oci-workspace-tabs" role="tablist" aria-label="DNS 管理视图">
+            <button class="oci-ws-tab active" type="button" data-dns-tab="console">解析控制台</button>
+            <button class="oci-ws-tab" type="button" data-dns-tab="bindings">VM 联动绑定</button>
+            <button class="oci-ws-tab" type="button" data-dns-tab="accounts">DNS 账号配置</button>
           </div>
 
-          <!-- DNS Bindings Panel -->
-          <div class="settings-panel dns-bindings-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>DNS 绑定列表</h3>
-                <p>所有 DNS 绑定配置。也可在每个 VM 卡片的「DNS 绑定」按钮中管理。</p>
+          <!-- Tab 1: 解析控制台 -->
+          <div id="dns-tab-console" class="settings-panel dns-console-panel">
+            <div class="dns-console-selector-card">
+              <div class="dns-selector-row">
+                <div class="dns-selector-group">
+                  <span class="dns-selector-label">1. 选择 DNS 账号</span>
+                  <div id="dns-console-account-pills" class="fw-account-pills"></div>
+                </div>
+                <div class="dns-selector-dropdowns">
+                  <select id="dns-console-account" aria-label="选择 DNS 账号">
+                    <option value="">-- 请选择 DNS 账号 --</option>
+                  </select>
+                  <select id="dns-console-domain" aria-label="选择管理域名" disabled>
+                    <option value="">-- 请先选择管理域名 --</option>
+                  </select>
+                  <span id="dns-console-provider-badge" class="dns-provider-badge cloudflare" hidden>Cloudflare</span>
+                </div>
+              </div>
+              <div class="dns-toolbar-bottom">
+                <div id="dns-console-domain-pills" class="dns-domain-quick-pills"></div>
+                <div class="dns-console-actions">
+                  <button id="dns-console-refresh" class="secondary-btn" type="button" disabled><i class="bi bi-arrow-clockwise"></i> 刷新记录</button>
+                  <button id="dns-record-add-btn" class="primary-btn" type="button" disabled><i class="bi bi-plus-lg"></i> 添加记录</button>
+                  <button id="dns-import-open-btn" class="secondary-btn" type="button" disabled><i class="bi bi-upload"></i> 导入 .zone</button>
+                  <button id="dns-export-btn" class="secondary-btn" type="button" disabled><i class="bi bi-download"></i> 导出 .zone</button>
+                </div>
               </div>
             </div>
+
+            <div id="dns-console-filterbar" class="dns-console-filterbar" hidden>
+              <div class="dns-console-search-wrap">
+                <input id="dns-console-search" type="search" placeholder="搜索主机记录 / 记录值 / 备注...">
+              </div>
+              <div id="dns-type-filter-pills" class="dns-filter-pills">
+                <button class="dns-filter-pill active" type="button" data-type="ALL">全部</button>
+                <button class="dns-filter-pill" type="button" data-type="A">A</button>
+                <button class="dns-filter-pill" type="button" data-type="AAAA">AAAA</button>
+                <button class="dns-filter-pill" type="button" data-type="CNAME">CNAME</button>
+                <button class="dns-filter-pill" type="button" data-type="MX">MX</button>
+                <button class="dns-filter-pill" type="button" data-type="TXT">TXT</button>
+                <button class="dns-filter-pill" type="button" data-type="NS">NS</button>
+                <button class="dns-filter-pill" type="button" data-type="SRV">SRV</button>
+                <button class="dns-filter-pill" type="button" data-type="CAA">CAA</button>
+              </div>
+            </div>
+
+            <div id="dns-console-stats" class="dns-stats-bar"></div>
+            <div id="dns-console-message" class="form-message"></div>
+
+            <!-- Inline Add / Edit Record Panel -->
+            <div id="dns-record-editor" class="dns-record-editor" hidden>
+              <div class="dns-record-editor-header">
+                <h4 id="dns-record-editor-title">新增解析记录</h4>
+                <button id="dns-record-cancel-btn" class="ghost-btn" type="button">✕ 取消</button>
+              </div>
+              <div class="dns-record-editor-grid">
+                <div class="field">
+                  <span>记录类型</span>
+                  <select id="dns-rec-type">
+                    <option value="A">A</option>
+                    <option value="AAAA">AAAA</option>
+                    <option value="CNAME">CNAME</option>
+                    <option value="MX">MX</option>
+                    <option value="TXT">TXT</option>
+                    <option value="NS">NS</option>
+                    <option value="SRV">SRV</option>
+                    <option value="CAA">CAA</option>
+                  </select>
+                </div>
+                <div class="field">
+                  <span>主机记录 (RR)</span>
+                  <input id="dns-rec-name" type="text" placeholder="@ / www / * / sub">
+                </div>
+                <div class="field">
+                  <span>记录值</span>
+                  <input id="dns-rec-value" type="text" placeholder="IP / 域名 / TXT 内容">
+                </div>
+                <div class="field">
+                  <span>TTL (秒)</span>
+                  <input id="dns-rec-ttl" type="number" min="1" value="600" placeholder="600 或 1(CF Auto)">
+                </div>
+                <div id="dns-rec-priority-wrap" class="field" hidden>
+                  <span>优先级 (MX/SRV)</span>
+                  <input id="dns-rec-priority" type="number" min="1" value="10">
+                </div>
+                <div id="dns-rec-line-wrap" class="field" hidden>
+                  <span>解析线路</span>
+                  <select id="dns-rec-line"></select>
+                </div>
+                <div id="dns-rec-remark-wrap" class="field">
+                  <span>备注 (可选)</span>
+                  <input id="dns-rec-remark" type="text" placeholder="用途说明">
+                </div>
+              </div>
+              <div id="dns-rec-proxied-wrap" style="margin-bottom:12px;" hidden>
+                <label class="checkbox-label" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;">
+                  <input id="dns-rec-proxied" type="checkbox">
+                  <span>开启 Cloudflare 代理 (Proxied CDN)</span>
+                </label>
+              </div>
+              <div class="dns-record-editor-actions">
+                <button id="dns-record-save-btn" class="primary-btn" type="button">保存记录</button>
+                <span id="dns-record-editor-msg" class="form-message"></span>
+              </div>
+            </div>
+
+            <div id="dns-records-table-wrap">
+              <div class="empty-state compact">
+                <i class="bi bi-globe2" style="font-size: 32px; display: block; margin-bottom: 8px; opacity: 0.6;"></i>
+                <strong>未加载任何解析记录</strong>
+                <p style="color: var(--muted); font-size: 13px; margin-top: 4px;">请在上方选择 DNS 账号与管理域名后加载解析记录。</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tab 2: VM 联动绑定 -->
+          <div id="dns-tab-bindings" class="settings-panel dns-bindings-panel" hidden>
+            <div class="panel-heading">
+              <div>
+                <h3>VM 自动解析绑定列表</h3>
+                <p>仅精准更新此处已绑定实例的 DNS 记录（需严格匹配云厂商、账号、实例名称与记录类型）。也可在实例卡片的「DNS 绑定」弹窗中管理。</p>
+              </div>
+            </div>
+            <div id="dns-bindings-message" class="form-message"></div>
             <div id="dns-bindings-list" class="dns-items-list">
               <div class="empty-state compact">加载中...</div>
             </div>
           </div>
 
-          <!-- Raw dns.conf display -->
-          <div class="settings-panel dns-raw-panel">
-            <div class="panel-heading">
-              <div>
-                <h3>当前 dns.conf</h3>
-                <p>只读预览，敏感信息与域名信息已脱敏。</p>
+          <!-- Tab 3: DNS 账号配置 -->
+          <div id="dns-tab-accounts" class="settings-panel dns-accounts-panel" hidden>
+            <div class="dns-accounts-layout">
+              <!-- Left Rail: Configured Accounts -->
+              <aside class="dns-accounts-rail">
+                <div class="dns-rail-head">
+                  <div>
+                    <h3 style="margin:0;font-size:15px;">DNS 账号列表</h3>
+                    <span id="dns-accounts-count" style="font-size:12px;color:var(--muted);">0 个已配置账号</span>
+                  </div>
+                  <button id="dns-acc-reset-btn" class="secondary-btn dns-new-acc-btn" type="button">+ 新建</button>
+                </div>
+                <div id="dns-accounts-list" class="dns-accounts-rail-list">
+                  <div class="empty-state compact">加载中...</div>
+                </div>
+              </aside>
+
+              <!-- Right Pane: Modern Editor Card -->
+              <div class="dns-account-editor-pane">
+                <div class="dns-editor-pane-header">
+                  <div>
+                    <h3 id="dns-acc-form-title" style="margin:0;font-size:16px;">新增 DNS 账号</h3>
+                    <p style="margin:4px 0 0;font-size:12.5px;color:var(--muted);">密钥已脱敏保护，仅管理您显式填写的域名范围。</p>
+                  </div>
+                  <span id="dns-acc-mode-badge" class="dns-provider-badge cloudflare">Cloudflare</span>
+                </div>
+
+                <div class="dns-form-section">
+                  <div class="dns-form-section-title">服务商选择</div>
+                  <div id="dns-provider-cards" class="dns-provider-cards">
+                    <button type="button" class="dns-provider-card active" data-prov="cloudflare">
+                      <span class="dns-provider-card-title">Cloudflare</span>
+                      <span class="dns-provider-card-sub">API Token + Zone ID</span>
+                    </button>
+                    <button type="button" class="dns-provider-card" data-prov="alidns">
+                      <span class="dns-provider-card-title">阿里云 DNS</span>
+                      <span class="dns-provider-card-sub">AccessKey 签名接口</span>
+                    </button>
+                    <button type="button" class="dns-provider-card" data-prov="tencent">
+                      <span class="dns-provider-card-title">腾讯云 DNS</span>
+                      <span class="dns-provider-card-sub">TC3-HMAC (国内/国际)</span>
+                    </button>
+                    <button type="button" class="dns-provider-card" data-prov="dnspod">
+                      <span class="dns-provider-card-title">DNSPod</span>
+                      <span class="dns-provider-card-sub">Token ID (国内/国际)</span>
+                    </button>
+                  </div>
+                  <select id="dns-acc-provider" hidden>
+                    <option value="cloudflare">Cloudflare</option>
+                    <option value="alidns">阿里云 DNS (Alidns)</option>
+                    <option value="tencent">腾讯云 DNS (API 3.0)</option>
+                    <option value="dnspod">DNSPod (Token)</option>
+                  </select>
+                </div>
+
+                <div class="dns-form-section">
+                  <div class="dns-form-section-title">基础信息</div>
+                  <div class="dns-form-two-col">
+                    <div class="field">
+                      <span>账号标识名称</span>
+                      <input id="dns-acc-name" type="text" placeholder="例如 cf-main / ali-prod">
+                    </div>
+                    <div class="field">
+                      <span>备注 (可选)</span>
+                      <input id="dns-acc-remark" type="text" placeholder="用途或环境说明">
+                    </div>
+                  </div>
+
+                  <div id="dns-acc-edition-group" class="dns-edition-row" hidden>
+                    <span class="dns-edition-label">服务区版本</span>
+                    <div id="dns-edition-pills" class="dns-segmented-pills">
+                      <button type="button" class="dns-seg-btn active" data-edition="cn">国内版 (China)</button>
+                      <button type="button" class="dns-seg-btn" data-edition="intl">国际版 (International)</button>
+                    </div>
+                    <select id="dns-acc-edition" hidden>
+                      <option value="cn">国内版 (China)</option>
+                      <option value="intl">国际版 (International)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="dns-form-section dns-cred-section">
+                  <div class="dns-form-section-title">API 认证凭证</div>
+
+                  <!-- Cloudflare credentials -->
+                  <div id="dns-cred-cloudflare" class="dns-form-two-col">
+                    <div class="field">
+                      <span>Cloudflare API Token</span>
+                      <input id="dns-acc-cf-token" type="password" placeholder="编辑时不修改可留空">
+                    </div>
+                    <div class="field">
+                      <span>Zone ID</span>
+                      <input id="dns-acc-cf-zone" type="text" placeholder="Cloudflare Zone ID">
+                    </div>
+                  </div>
+
+                  <!-- Alidns credentials -->
+                  <div id="dns-cred-alidns" class="dns-form-two-col" hidden>
+                    <div class="field">
+                      <span>AccessKey ID</span>
+                      <input id="dns-acc-ali-ak" type="text" placeholder="LTAI...">
+                    </div>
+                    <div class="field">
+                      <span>AccessKey Secret</span>
+                      <input id="dns-acc-ali-sk" type="password" placeholder="编辑时不修改可留空">
+                    </div>
+                  </div>
+
+                  <!-- Tencent credentials -->
+                  <div id="dns-cred-tencent" class="dns-form-two-col" hidden>
+                    <div class="field">
+                      <span>SecretId</span>
+                      <input id="dns-acc-tx-sid" type="text" placeholder="AKID...">
+                    </div>
+                    <div class="field">
+                      <span>SecretKey</span>
+                      <input id="dns-acc-tx-skey" type="password" placeholder="编辑时不修改可留空">
+                    </div>
+                  </div>
+
+                  <!-- DNSPod credentials -->
+                  <div id="dns-cred-dnspod" class="dns-form-two-col" hidden>
+                    <div class="field">
+                      <span>Token ID</span>
+                      <input id="dns-acc-dp-tid" type="text" placeholder="数字 Token ID">
+                    </div>
+                    <div class="field">
+                      <span>Token</span>
+                      <input id="dns-acc-dp-token" type="password" placeholder="编辑时不修改可留空">
+                    </div>
+                  </div>
+                </div>
+
+                <div class="dns-form-section">
+                  <div class="field" style="margin-bottom:0;">
+                    <span>管理域名列表 (仅管理此处配置的域名)</span>
+                    <input id="dns-acc-domains" type="text" placeholder="example.com, example.org">
+                  </div>
+                  <small id="dns-acc-domains-hint" style="display:block;margin-top:6px;color:var(--muted);font-size:12px;"></small>
+                </div>
+
+                <div class="dns-editor-footer">
+                  <button id="dns-acc-save-btn" class="primary-btn" type="button">保存 DNS 账号</button>
+                  <button id="dns-acc-delete-current-btn" class="action-btn danger" type="button" hidden>删除此账号</button>
+                  <span id="dns-acc-message" class="form-message"></span>
+                </div>
               </div>
-              <button id="dns-raw-refresh-btn" class="secondary-btn" type="button">刷新</button>
             </div>
-            <pre id="dns-raw-content" class="dns-raw-pre">加载中...</pre>
           </div>
         </section>
 
@@ -1667,16 +1911,50 @@
     <div class="modal-panel">
       <div class="modal-header">
         <h3 id="dns-modal-title">DNS 绑定配置</h3>
-        <button id="dns-modal-close" class="ghost-btn" type="button">✕</button>
+        <button id="dns-v2-modal-close" class="ghost-btn" type="button">✕</button>
       </div>
       <div id="dns-modal-body" class="modal-body">
         <div class="empty-state compact">加载中...</div>
       </div>
       <div class="modal-footer">
-        <button id="dns-modal-add" class="secondary-btn" type="button">+ 添加绑定</button>
-        <button id="dns-modal-save" class="primary-btn" type="button">保存</button>
+        <button id="dns-v2-modal-add" class="secondary-btn" type="button">+ 添加绑定</button>
+        <button id="dns-v2-modal-save" class="primary-btn" type="button">保存</button>
       </div>
       <div id="dns-modal-message" class="form-message"></div>
+    </div>
+  </div>
+
+  <!-- DNS Zone Import Modal -->
+  <div id="dns-import-modal" class="modal-overlay" hidden>
+    <div class="modal-panel dns-import-modal-panel">
+      <div class="modal-header">
+        <h3 id="dns-import-modal-title">导入 BIND Zone 解析记录 (.zone / .txt)</h3>
+        <button id="dns-import-close" class="ghost-btn" type="button">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label for="dns-import-file">选择 .zone 或 .txt 文件（或直接在下方粘贴内容）</label>
+          <input id="dns-import-file" type="file" accept=".zone,.txt,text/plain">
+        </div>
+        <div class="form-group">
+          <label for="dns-import-content">Zone 文件内容</label>
+          <textarea id="dns-import-content" rows="7" placeholder="$ORIGIN example.com.&#10;@ 600 IN A 1.2.3.4&#10;www 600 IN CNAME example.com."></textarea>
+        </div>
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+          <label class="checkbox-label" style="display:inline-flex;align-items:center;gap:8px;cursor:pointer;">
+            <input id="dns-import-overwrite" type="checkbox">
+            <span>覆盖已有同名同类型记录（默认跳过冲突记录）</span>
+          </label>
+          <button id="dns-import-preview-btn" class="secondary-btn" type="button" style="width:auto;">解析预览</button>
+        </div>
+        <div id="dns-import-preview-summary" style="margin-top:10px;font-size:13px;color:var(--muted);"></div>
+        <div id="dns-import-preview-wrap" class="dns-import-preview-wrap" hidden></div>
+      </div>
+      <div class="modal-footer">
+        <button id="dns-import-cancel" class="secondary-btn" type="button">取消</button>
+        <button id="dns-import-apply-btn" class="primary-btn" type="button" disabled>确认导入</button>
+      </div>
+      <div id="dns-import-message" class="form-message"></div>
     </div>
   </div>
 
@@ -2504,6 +2782,7 @@
   <script src="/public/js/ip-manage.js"></script>
   <script src="/public/js/azure-gcp-workspace.js"></script>
   <script src="/public/js/notify-settings.js"></script>
+  <script src="/public/js/dns-console.js"></script>
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const toggleBtn = document.getElementById('theme-toggle');

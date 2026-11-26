@@ -200,7 +200,11 @@ function bindNavigation() {
         fetchOverview();
       }
       if (section === 'dns') {
-        loadDNSPage();
+        if (window.dnsConsoleModule) {
+          window.dnsConsoleModule.loadDNSPage();
+        } else {
+          loadDNSPage();
+        }
       }
       if (section === 'proxies') {
         loadProxyPage();
@@ -860,7 +864,11 @@ async function handleVMAction(button) {
   };
 
   if (action === 'dns-bind') {
-    openDNSBindingModal(vm);
+    if (window.dnsConsoleModule) {
+      window.dnsConsoleModule.openVMDNSModal(vm.provider, vm.accountId || vm.account, vm.id || vm.name);
+    } else {
+      openDNSBindingModal(vm);
+    }
     return;
   }
   if (action === 'security-list') {

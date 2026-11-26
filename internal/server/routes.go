@@ -205,14 +205,26 @@ func SetupRouter(authService *auth.AuthService) *gin.Engine {
 	r.GET("/api/oci/:account/data-transfer/status", getDataTransferMonitorStatus)
 
 	// DNS management APIs
+	r.GET("/api/dns/accounts", listDNSAccounts)
+	r.POST("/api/dns/accounts", saveDNSAccountsHandler)
+	r.GET("/api/dns/console/domains", getDNSConsoleDomains)
+	r.GET("/api/dns/console/records", listDNSConsoleRecords)
+	r.POST("/api/dns/console/records", createDNSConsoleRecord)
+	r.PUT("/api/dns/console/records", updateDNSConsoleRecord)
+	r.DELETE("/api/dns/console/records", deleteDNSConsoleRecord)
+	r.PATCH("/api/dns/console/records/status", setDNSConsoleRecordStatus)
+	r.GET("/api/dns/console/export", exportDNSZoneHandler)
+	r.POST("/api/dns/console/import-preview", previewDNSImportHandler)
+	r.POST("/api/dns/console/import", applyDNSImportHandler)
+
 	r.GET("/api/dns/cloudflare", listCloudflareAccounts)
 	r.POST("/api/dns/cloudflare", saveCloudflareAccounts)
-	r.GET("/api/dns/bindings", listDNSBindings)
-	r.POST("/api/dns/bindings", saveDNSBindings)
+	r.GET("/api/dns/bindings", listDNSBindingsV2)
+	r.POST("/api/dns/bindings", saveDNSBindingsV2)
 	r.GET("/api/dns/raw", getDNSConfigRaw)
-	r.POST("/api/dns/delete-binding", deleteDNSBinding)
-	r.GET("/api/vm/:provider/:account/:name/dns", getVMDNSBindings)
-	r.POST("/api/vm/:provider/:account/:name/dns", saveVMDNSBindings)
+	r.POST("/api/dns/delete-binding", deleteDNSBindingV2)
+	r.GET("/api/vm/:provider/:account/:name/dns", getVMDNSBindingsV2)
+	r.POST("/api/vm/:provider/:account/:name/dns", saveVMDNSBindingsV2)
 
 	// Static & Pages
 	registerPages(r, authService)

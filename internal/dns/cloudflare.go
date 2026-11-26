@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -15,245 +15,599 @@ import (
 )
 
 type CloudflareService struct {
-	accounts map[string]config.CloudflareConfig
+	accounts map[string]config.DNSAccountConfig
 	bindings []config.DNSBinding
 	client   *http.Client
 }
 
 func NewCloudflareService(cfg *config.Config) *CloudflareService {
-	accounts := make(map[string]config.CloudflareConfig)
-	if cfg != nil {
-		for _, account := range cfg.Cloudflare {
-			accounts[account.Name] = account
-		}
-	}
+	accounts := make(map[string]config.DNSAccountConfig)
 	var bindings []config.DNSBinding
 	if cfg != nil {
-		bindings = cfg.DNSBindings
+		for _, a := range cfg.DNSAccounts {
+			if a.Name == "" {
+				continue
+			}
+			acc := a
+			if acc.Provider == "" {
+				acc.Provider = "cloudflare"
+			}
+			accounts[acc.Name] = acc
+		}
+		for _, cf := range cfg.Cloudflare {
+			if cf.Name == "" {
+				continue
+			}
+			if _, exists := accounts[cf.Name]; exists {
+				continue
+			}
+			accounts[cf.Name] = config.DNSAccountConfig{
+				Name:     cf.Name,
+				Provider: "cloudflare",
+				APIToken: cf.APIToken,
+				ZoneID:   cf.ZoneID,
+				Domains:  cf.Domains,
+			}
+		}
+		bindings = append(bindings, cfg.DNSBindings...)
 	}
 	return &CloudflareService{
 		accounts: accounts,
 		bindings: bindings,
-		client:   &http.Client{Timeout: 30 * time.Second},
+		client:   &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
-func (cf *CloudflareService) UpdateForVM(provider, account, vmID, ip string) []string {
-	if cf == nil || strings.TrimSpace(ip) == "" {
-		return nil
+func (s *CloudflareService) ClientFor(accountName string) (DNSClient, error) {
+	if s == nil {
+		return nil, fmt.Errorf("dns service is nil")
 	}
-	parsed := net.ParseIP(strings.TrimSpace(ip))
-	if parsed != nil && parsed.To4() == nil {
-		return cf.UpdateForVMByIPs(provider, account, vmID, "", strings.TrimSpace(ip))
+	acc, ok := s.accounts[strings.TrimSpace(accountName)]
+	if !ok {
+		return nil, fmt.Errorf("dns account %q not found", accountName)
 	}
-	return cf.UpdateForVMByIPs(provider, account, vmID, strings.TrimSpace(ip), "")
+	switch strings.ToLower(strings.TrimSpace(acc.Provider)) {
+	case "", "cloudflare":
+		return &cloudflareClient{account: acc, client: s.client}, nil
+	case "alidns":
+		return NewAlidnsClient(acc, s.client), nil
+	case "tencent":
+		return NewTencentClient(acc, s.client), nil
+	case "dnspod":
+		return NewDNSPodClient(acc, s.client), nil
+	default:
+		return nil, fmt.Errorf("unsupported dns provider %q", acc.Provider)
+	}
 }
 
-func (cf *CloudflareService) UpdateForVMByIPs(provider, account, vmID, ipv4, ipv6 string) []string {
-	ipv4 = strings.TrimSpace(ipv4)
-	ipv6 = strings.TrimSpace(ipv6)
-	if cf == nil || (ipv4 == "" && ipv6 == "") {
+func (s *CloudflareService) UpdateForVM(provider, account, vmID, ip string) []string {
+	trimmed := strings.TrimSpace(ip)
+	if trimmed == "" {
 		return nil
 	}
+	if strings.Contains(trimmed, ":") {
+		return s.UpdateForVMByIPs(provider, account, vmID, "", trimmed)
+	}
+	return s.UpdateForVMByIPs(provider, account, vmID, trimmed, "")
+}
 
+func (s *CloudflareService) UpdateForVMByIPs(provider, account, vmID, ipv4, ipv6 string) []string {
+	if s == nil || len(s.bindings) == 0 {
+		return nil
+	}
 	var logs []string
-	for _, binding := range cf.bindings {
-		if !bindingMatches(binding, provider, account, vmID) {
+	for _, binding := range s.bindings {
+		if !binding.Matches(provider, account, vmID) {
 			continue
 		}
-
-		recordType := strings.ToUpper(strings.TrimSpace(binding.Type))
-		if recordType == "" {
-			recordType = "A"
+		recType := strings.ToUpper(strings.TrimSpace(binding.Type))
+		if recType == "" {
+			recType = "A"
 		}
-
-		targetIP := ""
-		switch recordType {
-		case "A":
-			if ipv4 == "" {
-				continue
-			}
-			parsed := net.ParseIP(ipv4)
-			if parsed == nil || parsed.To4() == nil {
-				logs = append(logs, fmt.Sprintf("跳过 %s (A): %q 不是有效的 IPv4 地址", binding.Domain, ipv4))
-				continue
-			}
-			targetIP = ipv4
-		case "AAAA":
-			if ipv6 == "" {
-				continue
-			}
-			parsed := net.ParseIP(ipv6)
-			if parsed == nil || parsed.To4() != nil {
-				logs = append(logs, fmt.Sprintf("跳过 %s (AAAA): %q 不是有效的 IPv6 地址", binding.Domain, ipv6))
-				continue
-			}
-			targetIP = ipv6
-		default:
-			logs = append(logs, fmt.Sprintf("跳过 %s (%s): 不支持的自动 IP 记录类型", binding.Domain, recordType))
+		targetIP := strings.TrimSpace(ipv4)
+		if recType == "AAAA" {
+			targetIP = strings.TrimSpace(ipv6)
+		}
+		if targetIP == "" {
 			continue
 		}
-
-		cfAccount, ok := cf.accounts[binding.Cloudflare]
-		if !ok {
-			logs = append(logs, fmt.Sprintf("Cloudflare 配置 %s 不存在，跳过 %s", binding.Cloudflare, binding.Domain))
+		targetAcc := binding.TargetAccountName()
+		client, err := s.ClientFor(targetAcc)
+		if err != nil {
+			logs = append(logs, fmt.Sprintf("DNS update failed (%s %s -> %s): %v", binding.Domain, recType, targetIP, err))
 			continue
 		}
-
-		if err := cf.upsertRecord(cfAccount, binding, targetIP); err != nil {
-			logs = append(logs, fmt.Sprintf("Cloudflare 更新失败 %s (%s) -> %s: %v", binding.Domain, recordType, targetIP, err))
+		if err := client.UpsertBindingRecord(binding, targetIP); err != nil {
+			logs = append(logs, fmt.Sprintf("DNS update failed (%s %s -> %s): %v", binding.Domain, recType, targetIP, err))
 			continue
 		}
-		logs = append(logs, fmt.Sprintf("Cloudflare 已更新 %s (%s) -> %s", binding.Domain, recordType, targetIP))
+		logs = append(logs, fmt.Sprintf("DNS updated (%s): %s [%s] -> %s", targetAcc, binding.Domain, recType, targetIP))
 	}
 	return logs
 }
 
-func (cf *CloudflareService) HasBinding(provider, account, vmID string) bool {
-	if cf == nil {
+func (s *CloudflareService) HasBinding(provider, account, vmID string) bool {
+	if s == nil {
 		return false
 	}
-	for _, binding := range cf.bindings {
-		if bindingMatches(binding, provider, account, vmID) {
+	for _, b := range s.bindings {
+		if b.Matches(provider, account, vmID) {
 			return true
 		}
 	}
 	return false
 }
 
-func (cf *CloudflareService) BindingTypes(provider, account, vmID string) (hasA bool, hasAAAA bool) {
-	if cf == nil {
+func (s *CloudflareService) BindingTypes(provider, account, vmID string) (hasA, hasAAAA bool) {
+	if s == nil {
 		return false, false
 	}
-	for _, binding := range cf.bindings {
-		if !bindingMatches(binding, provider, account, vmID) {
+	for _, b := range s.bindings {
+		if !b.Matches(provider, account, vmID) {
 			continue
 		}
-		recordType := strings.ToUpper(strings.TrimSpace(binding.Type))
-		if recordType == "" || recordType == "A" {
-			hasA = true
-		} else if recordType == "AAAA" {
+		t := strings.ToUpper(strings.TrimSpace(b.Type))
+		if t == "AAAA" {
 			hasAAAA = true
+		} else {
+			hasA = true
 		}
 	}
 	return hasA, hasAAAA
 }
 
-func bindingMatches(binding config.DNSBinding, provider, account, vmID string) bool {
-	if binding.Provider != "" && !strings.EqualFold(binding.Provider, provider) {
-		return false
-	}
-	if binding.Account != "" && binding.Account != account {
-		return false
-	}
-	return binding.VM == "" || binding.VM == vmID
+type cloudflareClient struct {
+	account config.DNSAccountConfig
+	client  *http.Client
 }
 
-func (cf *CloudflareService) upsertRecord(account config.CloudflareConfig, binding config.DNSBinding, ip string) error {
-	if account.APIToken == "" {
-		return fmt.Errorf("api_token is empty")
+func (c *cloudflareClient) Capabilities() DNSCapabilities {
+	return DNSCapabilities{
+		Provider:        "cloudflare",
+		SupportsProxied: true,
+		SupportsLine:    false,
+		SupportsStatus:  false,
+		SupportsRemark:  true,
 	}
-	if account.ZoneID == "" {
-		return fmt.Errorf("zone_id is empty")
-	}
-	if binding.Domain == "" {
-		return fmt.Errorf("domain is empty")
+}
+
+func (c *cloudflareClient) ResolveConfiguredDomains() ([]DNSDomainInfo, error) {
+	if len(c.account.Domains) > 0 {
+		seen := make(map[string]struct{})
+		out := make([]DNSDomainInfo, 0, len(c.account.Domains))
+		for _, d := range c.account.Domains {
+			norm := normalizeRootDomain(d)
+			if norm == "" {
+				continue
+			}
+			if _, ok := seen[norm]; ok {
+				continue
+			}
+			seen[norm] = struct{}{}
+			out = append(out, DNSDomainInfo{Domain: norm, ZoneID: c.account.ZoneID})
+		}
+		if len(out) > 0 {
+			return out, nil
+		}
 	}
 
-	recordType := binding.Type
-	if recordType == "" {
-		recordType = "A"
+	zoneID := strings.TrimSpace(c.account.ZoneID)
+	if zoneID == "" {
+		return nil, nil
 	}
-	recordID, err := cf.findRecordID(account, recordType, binding.Domain)
+	// Resolve only the single configured Zone ID; never enumerate all account zones.
+	var resp struct {
+		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+		Result struct {
+			ID   string `json:"id"`
+			Name string `json:"name"`
+		} `json:"result"`
+	}
+	endpoint := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s", url.PathEscape(zoneID))
+	if err := c.doJSON(http.MethodGet, endpoint, nil, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("cloudflare zone lookup failed: %v", resp.Errors)
+	}
+	name := normalizeRootDomain(resp.Result.Name)
+	if name == "" {
+		return nil, nil
+	}
+	return []DNSDomainInfo{{Domain: name, ZoneID: zoneID}}, nil
+}
+
+func (c *cloudflareClient) ListRecords(domain string) ([]DNSRecord, error) {
+	zoneID := strings.TrimSpace(c.account.ZoneID)
+	if zoneID == "" {
+		return nil, fmt.Errorf("cloudflare zone_id is missing")
+	}
+	root := normalizeRootDomain(domain)
+	if root == "" && len(c.account.Domains) > 0 {
+		root = normalizeRootDomain(c.account.Domains[0])
+	}
+
+	var out []DNSRecord
+	page := 1
+	const perPage = 100
+	for {
+		var resp struct {
+			Success bool `json:"success"`
+			Errors  []struct {
+				Message string `json:"message"`
+			} `json:"errors"`
+			ResultInfo struct {
+				TotalPages int `json:"total_pages"`
+			} `json:"result_info"`
+			Result []struct {
+				ID       string `json:"id"`
+				Type     string `json:"type"`
+				Name     string `json:"name"`
+				Content  string `json:"content"`
+				TTL      int    `json:"ttl"`
+				Priority *int   `json:"priority,omitempty"`
+				Proxied  bool   `json:"proxied"`
+				Comment  string `json:"comment,omitempty"`
+			} `json:"result"`
+		}
+
+		endpoint := fmt.Sprintf(
+			"https://api.cloudflare.com/client/v4/zones/%s/dns_records?per_page=%d&page=%d",
+			url.PathEscape(zoneID), perPage, page,
+		)
+		if err := c.doJSON(http.MethodGet, endpoint, nil, &resp); err != nil {
+			return nil, err
+		}
+		if !resp.Success {
+			return nil, fmt.Errorf("cloudflare list records failed: %v", resp.Errors)
+		}
+
+		for _, item := range resp.Result {
+			fqdn := normalizeRootDomain(item.Name)
+			recDomain := root
+			if recDomain == "" {
+				recDomain = fqdn
+			}
+			rr := splitFQDNToRR(fqdn, recDomain)
+			out = append(out, DNSRecord{
+				ID:       item.ID,
+				Domain:   recDomain,
+				Name:     rr,
+				FQDN:     fqdn,
+				Type:     strings.ToUpper(strings.TrimSpace(item.Type)),
+				Value:    item.Content,
+				TTL:      item.TTL,
+				Priority: item.Priority,
+				Proxied:  item.Proxied,
+				Status:   "ENABLE",
+				Remark:   item.Comment,
+			})
+		}
+
+		if len(resp.Result) == 0 || (resp.ResultInfo.TotalPages > 0 && page >= resp.ResultInfo.TotalPages) || len(resp.Result) < perPage {
+			break
+		}
+		page++
+	}
+	return out, nil
+}
+
+func (c *cloudflareClient) CreateRecord(domain string, rec DNSRecord) (*DNSRecord, error) {
+	zoneID := strings.TrimSpace(c.account.ZoneID)
+	if zoneID == "" {
+		return nil, fmt.Errorf("cloudflare zone_id is missing")
+	}
+	root := normalizeRootDomain(domain)
+	recType := strings.ToUpper(strings.TrimSpace(rec.Type))
+	fqdn := rrToFQDN(rec.Name, root)
+	if fqdn == "" {
+		fqdn = strings.TrimSpace(rec.Name)
+	}
+	ttl := rec.TTL
+	if ttl <= 0 {
+		ttl = 1
+	}
+
+	payload := map[string]interface{}{
+		"type":    recType,
+		"name":    fqdn,
+		"content": rec.Value,
+		"ttl":     ttl,
+	}
+	if supportsCFProxy(recType) {
+		payload["proxied"] = rec.Proxied
+	}
+	if rec.Priority != nil && (recType == "MX" || recType == "SRV") {
+		payload["priority"] = *rec.Priority
+	}
+	if strings.TrimSpace(rec.Remark) != "" {
+		payload["comment"] = strings.TrimSpace(rec.Remark)
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+		Result struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Name     string `json:"name"`
+			Content  string `json:"content"`
+			TTL      int    `json:"ttl"`
+			Priority *int   `json:"priority,omitempty"`
+			Proxied  bool   `json:"proxied"`
+			Comment  string `json:"comment,omitempty"`
+		} `json:"result"`
+	}
+
+	endpoint := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", url.PathEscape(zoneID))
+	if err := c.doJSON(http.MethodPost, endpoint, payload, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("cloudflare create failed: %v", resp.Errors)
+	}
+
+	resDomain := root
+	if resDomain == "" {
+		resDomain = normalizeRootDomain(resp.Result.Name)
+	}
+	return &DNSRecord{
+		ID:       resp.Result.ID,
+		Domain:   resDomain,
+		Name:     splitFQDNToRR(resp.Result.Name, resDomain),
+		FQDN:     normalizeRootDomain(resp.Result.Name),
+		Type:     strings.ToUpper(resp.Result.Type),
+		Value:    resp.Result.Content,
+		TTL:      resp.Result.TTL,
+		Priority: resp.Result.Priority,
+		Proxied:  resp.Result.Proxied,
+		Status:   "ENABLE",
+		Remark:   resp.Result.Comment,
+	}, nil
+}
+
+func (c *cloudflareClient) UpdateRecord(domain string, recordID string, rec DNSRecord) (*DNSRecord, error) {
+	zoneID := strings.TrimSpace(c.account.ZoneID)
+	if zoneID == "" || recordID == "" {
+		return nil, fmt.Errorf("cloudflare zone_id and record id are required")
+	}
+	root := normalizeRootDomain(domain)
+	recType := strings.ToUpper(strings.TrimSpace(rec.Type))
+	fqdn := rrToFQDN(rec.Name, root)
+	if fqdn == "" {
+		fqdn = strings.TrimSpace(rec.Name)
+	}
+	ttl := rec.TTL
+	if ttl <= 0 {
+		ttl = 1
+	}
+
+	payload := map[string]interface{}{
+		"type":    recType,
+		"name":    fqdn,
+		"content": rec.Value,
+		"ttl":     ttl,
+	}
+	if supportsCFProxy(recType) {
+		payload["proxied"] = rec.Proxied
+	}
+	if rec.Priority != nil && (recType == "MX" || recType == "SRV") {
+		payload["priority"] = *rec.Priority
+	}
+	if rec.Remark != "" {
+		payload["comment"] = rec.Remark
+	}
+
+	var resp struct {
+		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+		Result struct {
+			ID       string `json:"id"`
+			Type     string `json:"type"`
+			Name     string `json:"name"`
+			Content  string `json:"content"`
+			TTL      int    `json:"ttl"`
+			Priority *int   `json:"priority,omitempty"`
+			Proxied  bool   `json:"proxied"`
+			Comment  string `json:"comment,omitempty"`
+		} `json:"result"`
+	}
+
+	endpoint := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s",
+		url.PathEscape(zoneID), url.PathEscape(recordID))
+	if err := c.doJSON(http.MethodPut, endpoint, payload, &resp); err != nil {
+		return nil, err
+	}
+	if !resp.Success {
+		return nil, fmt.Errorf("cloudflare update failed: %v", resp.Errors)
+	}
+
+	resDomain := root
+	if resDomain == "" {
+		resDomain = normalizeRootDomain(resp.Result.Name)
+	}
+	return &DNSRecord{
+		ID:       resp.Result.ID,
+		Domain:   resDomain,
+		Name:     splitFQDNToRR(resp.Result.Name, resDomain),
+		FQDN:     normalizeRootDomain(resp.Result.Name),
+		Type:     strings.ToUpper(resp.Result.Type),
+		Value:    resp.Result.Content,
+		TTL:      resp.Result.TTL,
+		Priority: resp.Result.Priority,
+		Proxied:  resp.Result.Proxied,
+		Status:   "ENABLE",
+		Remark:   resp.Result.Comment,
+	}, nil
+}
+
+func (c *cloudflareClient) DeleteRecord(domain string, recordID string) error {
+	zoneID := strings.TrimSpace(c.account.ZoneID)
+	if zoneID == "" || recordID == "" {
+		return fmt.Errorf("cloudflare zone_id and record id are required")
+	}
+	var resp struct {
+		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
+	}
+	endpoint := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s",
+		url.PathEscape(zoneID), url.PathEscape(recordID))
+	if err := c.doJSON(http.MethodDelete, endpoint, nil, &resp); err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("cloudflare delete failed: %v", resp.Errors)
+	}
+	return nil
+}
+
+func (c *cloudflareClient) SetRecordStatus(domain string, recordID string, enabled bool) error {
+	return fmt.Errorf("cloudflare does not support pause/enable record status toggle")
+}
+
+func (c *cloudflareClient) UpsertBindingRecord(binding config.DNSBinding, ip string) error {
+	zoneID := strings.TrimSpace(c.account.ZoneID)
+	if strings.TrimSpace(c.account.APIToken) == "" || zoneID == "" {
+		return fmt.Errorf("cloudflare credentials are incomplete")
+	}
+	recType := strings.ToUpper(strings.TrimSpace(binding.Type))
+	if recType == "" {
+		recType = "A"
+	}
+	ttl := binding.TTL
+	if ttl <= 0 {
+		ttl = 1
+	}
+
+	fqdn := binding.Domain
+	if len(c.account.Domains) > 0 {
+		root, rr, err := matchConfiguredDomain(binding.Domain, c.account.Domains)
+		if err != nil {
+			return err
+		}
+		fqdn = rrToFQDN(rr, root)
+	}
+
+	existingID, err := c.findRecordID(fqdn, recType)
 	if err != nil {
 		return err
 	}
 
 	payload := map[string]interface{}{
-		"type":    recordType,
-		"name":    binding.Domain,
+		"type":    recType,
+		"name":    fqdn,
 		"content": ip,
-		"ttl":     binding.TTL,
+		"ttl":     ttl,
 		"proxied": binding.Proxied,
 	}
-	if binding.TTL == 0 {
-		payload["ttl"] = 1
+
+	method := http.MethodPost
+	endpoint := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", url.PathEscape(zoneID))
+	if existingID != "" {
+		method = http.MethodPut
+		endpoint = fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records/%s",
+			url.PathEscape(zoneID), url.PathEscape(existingID))
 	}
 
-	method := "POST"
-	endpoint := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", url.PathEscape(account.ZoneID))
-	if recordID != "" {
-		method = "PATCH"
-		endpoint = fmt.Sprintf("%s/%s", endpoint, url.PathEscape(recordID))
+	var resp struct {
+		Success bool `json:"success"`
+		Errors  []struct {
+			Message string `json:"message"`
+		} `json:"errors"`
 	}
-
-	return cf.cloudflareJSON(account.APIToken, method, endpoint, payload, nil)
+	if err := c.doJSON(method, endpoint, payload, &resp); err != nil {
+		return err
+	}
+	if !resp.Success {
+		return fmt.Errorf("cloudflare update failed: %v", resp.Errors)
+	}
+	return nil
 }
 
-func (cf *CloudflareService) findRecordID(account config.CloudflareConfig, recordType, domain string) (string, error) {
-	query := url.Values{
-		"type": {recordType},
-		"name": {domain},
-	}
+func (c *cloudflareClient) findRecordID(name, recType string) (string, error) {
 	endpoint := fmt.Sprintf(
-		"https://api.cloudflare.com/client/v4/zones/%s/dns_records?%s",
-		url.PathEscape(account.ZoneID),
-		query.Encode(),
+		"https://api.cloudflare.com/client/v4/zones/%s/dns_records?type=%s&name=%s",
+		url.PathEscape(c.account.ZoneID),
+		url.QueryEscape(recType),
+		url.QueryEscape(name),
 	)
-
-	var records []struct {
-		ID string `json:"id"`
+	var resp struct {
+		Success bool `json:"success"`
+		Result  []struct {
+			ID string `json:"id"`
+		} `json:"result"`
 	}
-	if err := cf.cloudflareJSON(account.APIToken, "GET", endpoint, nil, &records); err != nil {
+	if err := c.doJSON(http.MethodGet, endpoint, nil, &resp); err != nil {
 		return "", err
 	}
-	if len(records) == 0 {
-		return "", nil
+	if len(resp.Result) > 0 {
+		return resp.Result[0].ID, nil
 	}
-	return records[0].ID, nil
+	return "", nil
 }
 
-func (cf *CloudflareService) cloudflareJSON(token, method, endpoint string, body interface{}, out interface{}) error {
+func (c *cloudflareClient) doJSON(method, endpoint string, body interface{}, out interface{}) error {
 	var reader io.Reader
 	if body != nil {
-		payload, err := json.Marshal(body)
+		b, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		reader = bytes.NewReader(payload)
+		reader = bytes.NewReader(b)
 	}
-
 	req, err := http.NewRequest(method, endpoint, reader)
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Authorization", "Bearer "+c.account.APIToken)
 	req.Header.Set("Content-Type", "application/json")
-
-	resp, err := cf.client.Do(req)
+	client := c.client
+	if client == nil {
+		client = &http.Client{Timeout: 20 * time.Second}
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
 	defer resp.Body.Close()
 
-	data, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("Cloudflare API returned %d: %s", resp.StatusCode, string(data))
-	}
-
-	var envelope struct {
-		Success bool            `json:"success"`
-		Errors  []interface{}   `json:"errors"`
-		Result  json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(data, &envelope); err != nil {
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
 		return err
 	}
-	if !envelope.Success {
-		return fmt.Errorf("Cloudflare API error: %v", envelope.Errors)
+	if resp.StatusCode >= 400 {
+		return fmt.Errorf("cloudflare api %d: %s", resp.StatusCode, strings.TrimSpace(string(raw)))
 	}
-	if out != nil && len(envelope.Result) > 0 {
-		return json.Unmarshal(envelope.Result, out)
+	if out != nil && len(raw) > 0 {
+		if err := json.Unmarshal(raw, out); err != nil {
+			return err
+		}
 	}
 	return nil
+}
+
+func supportsCFProxy(recType string) bool {
+	switch strings.ToUpper(strings.TrimSpace(recType)) {
+	case "A", "AAAA", "CNAME":
+		return true
+	default:
+		return false
+	}
+}
+
+func parsePositiveInt(s string, fallback int) int {
+	v, err := strconv.Atoi(strings.TrimSpace(s))
+	if err != nil || v <= 0 {
+		return fallback
+	}
+	return v
 }
